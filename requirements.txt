@@ -1,6 +1,7 @@
 playwright==1.42.0
 SQLAlchemy==2.0.29
 asyncpg==0.29.0
+aiosqlite==0.20.0
 alembic==1.13.1
 pydantic==2.6.4
 pydantic-settings==2.2.1
