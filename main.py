@@ -37,7 +37,8 @@ async def run_scraper():
             links = await scraper.fetch_category_links(target)
             logger.success(f"Found {len(links)} listings.")
             
-            for link in links[:10]:
+            # Öğrenme hızını artırmak için limit 10'dan 40'a çıkarıldı
+            for link in links[:40]:
                 logger.info(f"Scraping detail page: {link}")
                 
                 # Anti-Bot Jitter Mechanism
@@ -109,7 +110,6 @@ async def run_scraper():
                             
                             # Trigger Telegram Notification asynchronously
                             from src.notifications import send_telegram_notification
-                            import asyncio
                             asyncio.create_task(asyncio.to_thread(send_telegram_notification, data))
                             logger.info(f"Telegram notification triggered for {data['source_listing_id']}")
                         else:
