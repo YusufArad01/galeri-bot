@@ -3,7 +3,7 @@ import asyncio
 import random
 from datetime import datetime
 from playwright.async_api import async_playwright, Page, Route
-from playwright_stealth import Stealth
+from playwright_stealth import stealth_async
 from loguru import logger
 from typing import Dict, Any, Optional
 from src.proxy.manager import ProxyManager
@@ -84,7 +84,7 @@ class ScraperEngine:
                     page = context.pages[0]
                 else:
                     page = await context.new_page()
-                await Stealth().apply_stealth_async(page)
+                await stealth_async(page)
                 await page.route("**/*", self._intercept_route)
 
                 try:
@@ -165,7 +165,7 @@ class ScraperEngine:
                     page = context.pages[0]
                 else:
                     page = await context.new_page()
-                await Stealth().apply_stealth_async(page)
+                await stealth_async(page)
                 await page.route("**/*", self._intercept_route)
 
                 try:
