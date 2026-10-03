@@ -283,6 +283,18 @@ class ScraperEngine:
                     if proxy:
                         await self.proxy_manager.mark_success(proxy.id)
 
+                    seller_type = "Bilinmiyor"
+                    if "sahibinden" in title.lower():
+                        seller_type = "Sahibinden"
+                    elif "galeriden" in title.lower() or "yetkili" in title.lower():
+                        seller_type = "Galeriden"
+                        
+                    is_heavy_damage = False
+                    heavy_damage_keywords = ["ağır hasar", "agir hasar", "pert", "ağır hasarlı", "agir hasarli"]
+                    search_text = (title + " " + description).lower()
+                    if any(kw in search_text for kw in heavy_damage_keywords):
+                        is_heavy_damage = True
+
                     return {
                         "source_listing_id": url.split("/")[-1].split("-")[-1],
                         "title": title,
@@ -293,7 +305,9 @@ class ScraperEngine:
                         "price": price,
                         "city": city,
                         "description": description,
-                        "url": url
+                        "url": url,
+                        "seller_type": seller_type,
+                        "is_heavy_damage": is_heavy_damage
                     }
 
                 except Exception as e:

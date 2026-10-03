@@ -100,6 +100,15 @@ async def run_scraper():
                             is_opportunity = True
                             logger.info("Opportunity detected via keywords.")
 
+                        # Yeni Filtreler: Sadece Sahibinden ve Hasarsız
+                        if data.get('seller_type') != "Sahibinden":
+                            is_opportunity = False
+                            logger.info(f"Listing rejected: Not Sahibinden (Seller: {data.get('seller_type')})")
+                            
+                        if data.get('is_heavy_damage'):
+                            is_opportunity = False
+                            logger.info("Listing rejected: Heavy damage / Pert detected.")
+
                         # Veritabanına kaydet
                         await session.commit()
                         logger.success(f"Successfully saved new listing to Database: {data['source_listing_id']}")
