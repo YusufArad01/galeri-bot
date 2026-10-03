@@ -100,10 +100,7 @@ async def run_scraper():
                             is_opportunity = True
                             logger.info("Opportunity detected via keywords.")
 
-                        # Yeni Filtreler: Sadece Sahibinden ve Hasarsız
-                        if data.get('seller_type') != "Sahibinden":
-                            is_opportunity = False
-                            logger.info(f"Listing rejected: Not Sahibinden (Seller: {data.get('seller_type')})")
+                        # Yeni Filtreler: Sadece Hasarsız (Ağır hasar engeli)
                             
                         if data.get('is_heavy_damage'):
                             is_opportunity = False
