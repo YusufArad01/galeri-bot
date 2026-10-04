@@ -75,15 +75,9 @@ class ScraperEngine:
                 if proxy_url:
                     browser_kwargs["proxy"] = {"server": proxy_url}
                 
-                context = await p.chromium.launch_persistent_context(
-                    user_data_dir="user_data",
-                    **browser_kwargs
-                )
-                
-                if len(context.pages) > 0:
-                    page = context.pages[0]
-                else:
-                    page = await context.new_page()
+                browser = await p.chromium.launch(**browser_kwargs)
+                context = await browser.new_context()
+                page = await context.new_page()
                 await stealth_async(page)
                 await page.route("**/*", self._intercept_route)
 
@@ -156,15 +150,9 @@ class ScraperEngine:
                 if proxy_url:
                     browser_kwargs["proxy"] = {"server": proxy_url}
                 
-                context = await p.chromium.launch_persistent_context(
-                    user_data_dir="user_data",
-                    **browser_kwargs
-                )
-                
-                if len(context.pages) > 0:
-                    page = context.pages[0]
-                else:
-                    page = await context.new_page()
+                browser = await p.chromium.launch(**browser_kwargs)
+                context = await browser.new_context()
+                page = await context.new_page()
                 await stealth_async(page)
                 await page.route("**/*", self._intercept_route)
 
