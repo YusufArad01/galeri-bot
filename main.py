@@ -4,6 +4,7 @@ from src.database import engine, Base
 from src.database import AsyncSessionLocal
 from src.proxy.manager import ProxyManager
 from src.scraper.engine import ScraperEngine
+from src.scraper.vavacars_engine import VavaCarsEngine
 from src.config import settings
 from src.models.domain import Listing
 from sqlalchemy import select
@@ -19,18 +20,23 @@ import random
 async def run_scraper():
     async with AsyncSessionLocal() as session:
         proxy_manager = ProxyManager(session)
-        scraper = ScraperEngine(proxy_manager)
-        
         target = settings.TARGET_URL
         if not target:
             logger.error("TARGET_URL is not set.")
             return
             
-        # Ensure 'En Yeni' sorting is applied for Arabam.com to always get fresh listings
-        if "?" not in target:
-            target += "?sort=DateDesc"
-        elif "sort=" not in target:
-            target += "&sort=DateDesc"
+        if "vava.cars" in target:
+            scraper = VavaCarsEngine(proxy_manager)
+            # VavaCars base target
+            if "/buy/cars" not in target:
+                target = "https://tr.vava.cars/buy/cars"
+        else:
+            scraper = ScraperEngine(proxy_manager)
+            # Ensure 'En Yeni' sorting is applied for Arabam.com
+            if "?" not in target:
+                target += "?sort=DateDesc"
+            elif "sort=" not in target:
+                target += "&sort=DateDesc"
 
         logger.info(f"Fetching category links from: {target}")
         try:
