@@ -9,6 +9,47 @@ from src.config import settings
 from src.models.domain import Listing
 from sqlalchemy import select
 
+import httpx
+import re
+import json
+import os
+
+async def get_perplexity_market_average(brand: str, model: str, year: int) -> float:
+    api_key = os.environ.get("PERPLEXITY_API_KEY")
+    if not api_key:
+        logger.error("PERPLEXITY_API_KEY is missing!")
+        return 0.0
+        
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    prompt = f"Türkiye'deki güncel ikinci el piyasasında {year} model {brand} {model} ortalama satış fiyatı nedir? Bana SADECE tek bir düz rakam ver. Örnek: 850000. Yazı veya harf kullanma."
+    
+    payload = {
+        "model": "sonar",
+        "messages": [
+            {"role": "system", "content": "Sen sadece araçların güncel ortalama piyasa fiyatını 'rakam' olarak veren bir API'sin. Harf, virgül veya nokta kullanma. Sadece tek bir rakam dön."},
+            {"role": "user", "content": prompt}
+        ]
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post("https://api.perplexity.ai/chat/completions", headers=headers, json=payload, timeout=30.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                numbers = re.findall(r'\d+', content.replace('.', '').replace(',', '').replace(' ', ''))
+                if numbers:
+                    # Rakam çok uzunsa veya saçmaysa koruma (örn. milyonları birleştirirse)
+                    val = float(numbers[0])
+                    if val > 100000 and val < 20000000:
+                        return val
+    except Exception as e:
+        logger.error(f"Perplexity API error: {e}")
+    return 0.0
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -87,30 +128,38 @@ async def run_scraper():
                         margin = 0
                         market_avg = avg_price
                         
-                        # 1. Kelime Bazlı Fırsat (Acil/Nakit vs)
-                        keywords = ['acil', 'acilinden', 'aciliyetten', 'fırsat', 'nakit']
-                        search_text = (data.get('title', '') + " " + data.get('description', '')).lower()
-                        keyword_match = any(word in search_text for word in keywords)
-                        
-                        # 2. Fiyat Anomalisi Analizi
-                        if sample_size >= 2 and market_avg > 0:
-                            discount = market_avg - price
-                            discount_percentage = (discount / market_avg) * 100
-                            
-                            if discount_percentage >= 6:
-                                is_opportunity = True
-                                margin = discount
-                                logger.info(f"Anomaly detected! {discount_percentage:.1f}% below market. Est. Margin: {margin} TL")
-                        
-                        if keyword_match and not is_opportunity:
-                            is_opportunity = True
-                            logger.info("Opportunity detected via keywords.")
-
-                        # Yeni Filtreler: Sadece Hasarsız (Ağır hasar engeli)
-                            
+                        # Önce ağır hasar filtresi (API maliyetinden kaçınmak için)
                         if data.get('is_heavy_damage'):
                             is_opportunity = False
                             logger.info("Listing rejected: Heavy damage / Pert detected.")
+                        else:
+                            # 1. Kelime Bazlı Fırsat
+                            keywords = ['acil', 'acilinden', 'aciliyetten', 'fırsat', 'nakit']
+                            search_text = (data.get('title', '') + " " + data.get('description', '')).lower()
+                            keyword_match = any(word in search_text for word in keywords)
+                            
+                            # 2. Fiyat Anomalisi Analizi
+                            if sample_size < 2 or market_avg == 0:
+                                logger.info(f"Not enough local DB data for {brand} {model} {year}. Asking Perplexity AI...")
+                                px_avg = await get_perplexity_market_average(brand, model, year)
+                                if px_avg > 0:
+                                    logger.info(f"Perplexity AI estimates market average: {px_avg} TL")
+                                    market_avg = px_avg
+                                else:
+                                    logger.warning("Perplexity failed to return a valid average.")
+                                
+                            if market_avg > 0:
+                                discount = market_avg - price
+                                discount_percentage = (discount / market_avg) * 100
+                                
+                                if discount_percentage >= 6:
+                                    is_opportunity = True
+                                    margin = discount
+                                    logger.info(f"Anomaly detected! {discount_percentage:.1f}% below market. Est. Margin: {margin} TL")
+                            
+                            if keyword_match and not is_opportunity:
+                                is_opportunity = True
+                                logger.info("Opportunity detected via keywords.")
 
                         # Veritabanına kaydet
                         await session.commit()
