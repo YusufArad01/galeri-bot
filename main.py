@@ -14,7 +14,7 @@ import re
 import json
 import os
 
-async def get_perplexity_market_average(brand: str, model: str, year: int) -> float:
+async def get_perplexity_market_average(brand: str, model: str, year: int, km: int) -> float:
     api_key = os.environ.get("PERPLEXITY_API_KEY")
     if not api_key:
         logger.error("PERPLEXITY_API_KEY is missing!")
@@ -24,7 +24,7 @@ async def get_perplexity_market_average(brand: str, model: str, year: int) -> fl
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    prompt = f"Türkiye'deki güncel ikinci el piyasasında {year} model {brand} {model} ortalama satış fiyatı nedir? Bana SADECE tek bir düz rakam ver. Örnek: 850000. Yazı veya harf kullanma."
+    prompt = f"Türkiye'deki güncel ikinci el piyasasında {year} model {brand} {model} ({km} Kilometrede) ortalama satış fiyatı nedir? Bana SADECE tek bir düz rakam ver. Örnek: 850000. Yazı veya harf kullanma."
     
     payload = {
         "model": "sonar",
@@ -145,7 +145,7 @@ async def run_scraper():
                             # 2. Fiyat Anomalisi Analizi
                             if sample_size < 2 or market_avg == 0:
                                 logger.info(f"Not enough local DB data for {brand} {model} {year}. Asking Perplexity AI...")
-                                px_avg = await get_perplexity_market_average(brand, model, year)
+                                px_avg = await get_perplexity_market_average(brand, model, year, km)
                                 if px_avg > 0:
                                     logger.info(f"Perplexity AI estimates market average: {px_avg} TL")
                                     market_avg = px_avg
