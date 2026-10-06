@@ -65,18 +65,21 @@ class ScraperEngine:
             
             async with async_playwright() as p:
                 is_headless = os.environ.get("HEADLESS", "false").lower() == "true"
-                browser_kwargs = {
+                launch_kwargs = {
                     "headless": is_headless,
-                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                    "viewport": {"width": 1280, "height": 720},
                     "ignore_default_args": ["--enable-automation"],
                     "args": ["--disable-blink-features=AutomationControlled"]
                 }
                 if proxy_url:
-                    browser_kwargs["proxy"] = {"server": proxy_url}
+                    launch_kwargs["proxy"] = {"server": proxy_url}
                 
-                browser = await p.chromium.launch(**browser_kwargs)
-                context = await browser.new_context()
+                context_kwargs = {
+                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                    "viewport": {"width": 1280, "height": 720}
+                }
+                
+                browser = await p.chromium.launch(**launch_kwargs)
+                context = await browser.new_context(**context_kwargs)
                 page = await context.new_page()
                 await stealth_async(page)
                 await page.route("**/*", self._intercept_route)
@@ -140,18 +143,21 @@ class ScraperEngine:
             
             async with async_playwright() as p:
                 is_headless = os.environ.get("HEADLESS", "false").lower() == "true"
-                browser_kwargs = {
+                launch_kwargs = {
                     "headless": is_headless,
-                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                    "viewport": {"width": 1280, "height": 720},
                     "ignore_default_args": ["--enable-automation"],
                     "args": ["--disable-blink-features=AutomationControlled"]
                 }
                 if proxy_url:
-                    browser_kwargs["proxy"] = {"server": proxy_url}
+                    launch_kwargs["proxy"] = {"server": proxy_url}
                 
-                browser = await p.chromium.launch(**browser_kwargs)
-                context = await browser.new_context()
+                context_kwargs = {
+                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                    "viewport": {"width": 1280, "height": 720}
+                }
+                
+                browser = await p.chromium.launch(**launch_kwargs)
+                context = await browser.new_context(**context_kwargs)
                 page = await context.new_page()
                 await stealth_async(page)
                 await page.route("**/*", self._intercept_route)
