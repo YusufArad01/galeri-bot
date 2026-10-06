@@ -24,7 +24,7 @@ async def get_perplexity_market_average(brand: str, model: str, year: int, km: i
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    prompt = f"Türkiye'deki güncel ikinci el piyasasında {year} model {brand} {model} ({km} Kilometrede) ortalama satış fiyatı nedir? Bana SADECE tek bir düz rakam ver. Örnek: 850000. Yazı veya harf kullanma."
+    prompt = f"Türkiye ikinci el araç piyasasında {year} model {brand} {model} ({km} Kilometrede) normal durumdaki (ufak boya/değişen olabilir ama pert/ağır hasarlı DEĞİL) bir aracın ortalama güncel satış fiyatı nedir? SADECE tek bir rakam dön. Örnek: 850000"
     
     payload = {
         "model": "sonar",

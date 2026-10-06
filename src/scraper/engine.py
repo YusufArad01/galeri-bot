@@ -284,6 +284,13 @@ class ScraperEngine:
                         seller_type = "Galeriden"
                         
                     is_heavy_damage = False
+                    # 1. Özellikler tablosundan (props) kontrol et
+                    for k, v in props.items():
+                        if "ağır hasarlı" in k.lower() or "agir hasarli" in k.lower():
+                            if "evet" in v.lower():
+                                is_heavy_damage = True
+                                
+                    # 2. Başlık ve Açıklamadan kontrol et
                     heavy_damage_keywords = ["ağır hasar", "agir hasar", "pert", "ağır hasarlı", "agir hasarli"]
                     search_text = (title + " " + description).lower()
                     if any(kw in search_text for kw in heavy_damage_keywords):
