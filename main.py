@@ -98,13 +98,17 @@ async def run_scraper():
                     logger.success(f"Scraped Data: {data}")
                     
                     # Deduplication and DB Persistence
-                    result = await session.execute(select(Listing).where(Listing.source_listing_id == data["source_listing_id"]))
+                    db_data = data.copy()
+                    db_data.pop('seller_type', None)
+                    db_data.pop('is_heavy_damage', None)
+                    
+                    result = await session.execute(select(Listing).where(Listing.source_listing_id == db_data["source_listing_id"]))
                     existing = result.scalar_one_or_none()
                     
                     if existing:
-                        logger.info(f"Listing {data['source_listing_id']} already exists in Database. Skipping.")
+                        logger.info(f"Listing {db_data['source_listing_id']} already exists in Database. Skipping.")
                     else:
-                        new_listing = Listing(**data)
+                        new_listing = Listing(**db_data)
                         session.add(new_listing)
                         
                         # --- Piyasa Anomalisi ve Akıllı Fiyat Analizi ---
