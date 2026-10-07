@@ -115,6 +115,7 @@ async def run_scraper():
                         brand = data.get('brand', '')
                         model = data.get('model', '')
                         year = data.get('year', 0)
+                        km = data.get('km', 0)
                         price = data.get('price', 0.0)
                         
                         from sqlalchemy import func
