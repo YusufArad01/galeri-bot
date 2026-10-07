@@ -312,8 +312,12 @@ class ScraperEngine:
                             degisen_count = int(degisen_match.group(1)) if degisen_match else 0
                             boyali_count = int(boyali_match.group(1)) if boyali_match else 0
                             
+                            # 'Tamamı' veya 'Komple' kelimesi varsa direkt pert say
+                            if "tamamı" in v.lower() or "komple" in v.lower():
+                                is_heavy_damage = True
+                            
                             # 2 veya daha fazla değişen VEYA 4 veya daha fazla boya varsa FİLTRELE
-                            if degisen_count >= 2 or boyali_count >= 4 or (degisen_count + boyali_count) >= 5:
+                            elif degisen_count >= 2 or boyali_count >= 4 or (degisen_count + boyali_count) >= 5:
                                 is_heavy_damage = True
                                 
                     # 2. Başlık ve Açıklamadan kontrol et
