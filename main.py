@@ -97,10 +97,16 @@ async def run_scraper():
                     data = await scraper.fetch_listing_data(link)
                     logger.success(f"Scraped Data: {data}")
                     
+                    # 0. Ön Eleme (Pert, Ağır Hasar, Yaşlı/Sıradan)
+                    if data.get('is_disqualified') or data.get('is_heavy_damage'):
+                        logger.info(f"Listing {url} disqualified (heavy damage, too old, or >2 değişen/>4 boya). Skipping.")
+                        continue
+                        
                     # Deduplication and DB Persistence
                     db_data = data.copy()
                     db_data.pop('seller_type', None)
                     db_data.pop('is_heavy_damage', None)
+                    db_data.pop('is_disqualified', None)
                     
                     result = await session.execute(select(Listing).where(Listing.source_listing_id == db_data["source_listing_id"]))
                     existing = result.scalar_one_or_none()
