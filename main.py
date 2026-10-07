@@ -157,7 +157,7 @@ async def run_scraper():
                                 discount = market_avg - price
                                 discount_percentage = (discount / market_avg) * 100
                                 
-                                if discount_percentage >= 8:
+                                if discount_percentage >= 10:
                                     is_opportunity = True
                                     margin = discount
                                     logger.info(f"Anomaly detected! {discount_percentage:.1f}% below market. Est. Margin: {margin} TL")
