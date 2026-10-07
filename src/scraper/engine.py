@@ -189,7 +189,15 @@ class ScraperEngine:
                     }''')
                     
                     price_text = await self._extract_text(page, [".product-price", ".price", ".listing-price", "h3"])
-                    description = await self._extract_text(page, [".product-description", "#productDescription", ".listing-desc", "p"])
+                    
+                    description = await page.evaluate('''() => {
+                        let el = document.querySelector('.ilan-aciklamasi') || document.querySelector('#js-hook-for-observer-detail') || document.querySelector('.description');
+                        return el ? el.innerText.trim() : "";
+                    }''')
+                    
+                    if not description:
+                        description = await self._extract_text(page, [".product-description", "#productDescription", ".listing-desc"])
+
 
                     if not title or not price_text or not description:
                         logger.warning(f"Could not parse element(s) on listing card {url}. Gracefully degrading.")
