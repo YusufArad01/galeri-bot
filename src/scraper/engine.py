@@ -291,6 +291,12 @@ class ScraperEngine:
                     elif "galeriden" in title.lower() or "yetkili" in title.lower():
                         seller_type = "Galeriden"
                         
+                    is_disqualified = False
+                    
+                    # 1. Yaş ve Fiyat Filtresi: 2005 ve altı model olup 1 Milyon TL'den ucuzsa (sıradan eski arabaysa) direkt çöpe at
+                    if year > 0 and year <= 2005 and price < 1000000.0:
+                        is_disqualified = True
+
                     is_heavy_damage = False
                     # 1. Özellikler tablosundan (props) kontrol et
                     for k, v in props.items():
@@ -315,6 +321,8 @@ class ScraperEngine:
                     search_text = (title + " " + description).lower()
                     if any(kw in search_text for kw in heavy_damage_keywords):
                         is_heavy_damage = True
+                        
+                    is_disqualified = is_disqualified or is_heavy_damage
 
                     return {
                         "source_listing_id": url.split("/")[-1].split("-")[-1],
@@ -328,7 +336,8 @@ class ScraperEngine:
                         "description": description,
                         "url": url,
                         "seller_type": seller_type,
-                        "is_heavy_damage": is_heavy_damage
+                        "is_heavy_damage": is_heavy_damage,
+                        "is_disqualified": is_disqualified
                     }
 
                 except Exception as e:
