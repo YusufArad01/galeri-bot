@@ -99,7 +99,7 @@ async def run_scraper():
                     
                     # 0. Ön Eleme (Pert, Ağır Hasar, Yaşlı/Sıradan)
                     if data.get('is_disqualified') or data.get('is_heavy_damage'):
-                        logger.info(f"Listing {url} disqualified (heavy damage, too old, or >2 değişen/>4 boya). Skipping.")
+                        logger.info(f"Listing {link} disqualified (heavy damage, too old, or >2 değişen/>4 boya). Skipping.")
                         continue
                         
                     # Deduplication and DB Persistence
@@ -168,10 +168,7 @@ async def run_scraper():
                                     margin = discount
                                     logger.info(f"Anomaly detected! {discount_percentage:.1f}% below market. Est. Margin: {margin} TL")
                             
-                            if keyword_match and not is_opportunity:
-                                is_opportunity = True
-                                logger.info("Opportunity detected via keywords.")
-
+                            # Keywords will not bypass the math check anymore
                         # Veritabanına kaydet
                         await session.commit()
                         logger.success(f"Successfully saved new listing to Database: {data['source_listing_id']}")
