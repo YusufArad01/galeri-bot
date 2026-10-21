@@ -1,17 +1,32 @@
 import datetime
+import random
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.domain import Proxy
 from loguru import logger
 
+
 class ProxyManager:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def seed(self, urls: list[str]) -> None:
+        """PROXY_URL ortam değişkenindeki proxy'leri tabloya ekler (varsa dokunmaz)."""
+        for url in urls:
+            exists = (await self.session.execute(select(Proxy).where(Proxy.url == url))).scalars().first()
+            if not exists:
+                self.session.add(Proxy(url=url))
+        await self.session.commit()
+
+    async def has_active(self) -> bool:
+        stmt = select(Proxy.id).where(Proxy.is_active == True).limit(1)  # noqa: E712
+        return (await self.session.execute(stmt)).first() is not None
+
     async def get_proxy(self) -> Proxy | None:
-        stmt = select(Proxy).where(Proxy.is_active == True).order_by(Proxy.last_used_at.asc().nulls_first())
+        stmt = select(Proxy).where(Proxy.is_active == True).order_by(Proxy.last_used_at.asc().nulls_first())  # noqa: E712
         result = await self.session.execute(stmt)
-        proxy = result.scalars().first()
+        candidates = result.scalars().all()[:3]  # en az kullanılan üçü arasından rastgele
+        proxy = random.choice(candidates) if candidates else None
         if proxy:
             proxy.last_used_at = datetime.datetime.utcnow()
             await self.session.commit()
@@ -23,6 +38,7 @@ class ProxyManager:
         proxy = result.scalars().first()
         if proxy:
             proxy.success_count += 1
+            proxy.failure_count = 0  # ardışık hata sayacı
             await self.session.commit()
 
     async def mark_failure(self, proxy_id: int):

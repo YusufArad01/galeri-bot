@@ -1,62 +1,108 @@
-import requests
+"""Telegram gönderimi + kalıcı outbox.
+
+Bildirim önce `alerts` tablosuna yazılır, sonra gönderilir. Telegram/ağ hatasında kayıt
+PENDING kalır ve sonraki döngüde yeniden denenir; böylece geçici bir kesinti fırsat
+kaybettirmez. (Eski sürümde mesaj fire-and-forget gönderiliyordu, hata sadece loga düşüyordu.)
+"""
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timedelta
+
+import httpx
 from loguru import logger
-from src.config import settings
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
-def send_telegram_notification(data: dict):
-    token = settings.TELEGRAM_BOT_TOKEN
-    chat_id = settings.TELEGRAM_CHAT_ID
+from src.models.domain import Alert
 
-    if not token or not chat_id:
-        logger.warning("Telegram token or chat ID is missing. Cannot send notification.")
-        return
+MAX_LEN = 4096
+MAX_ATTEMPTS = 8
+PENDING_MAX_AGE = timedelta(hours=24)
 
-    # Fiyatı daha okunaklı formatla (Örn: 1.250.000)
-    try:
-        fiyat_str = f"{int(data.get('price', 0)):,}".replace(',', '.')
-    except:
-        fiyat_str = str(data.get('price', ''))
 
-    # KM'yi daha okunaklı formatla
-    try:
-        km_str = f"{int(data.get('km', 0)):,}".replace(',', '.')
-    except:
-        km_str = str(data.get('km', ''))
+class Telegram:
+    def __init__(self, token: str, client: httpx.AsyncClient | None = None):
+        self.token = token
+        self._client = client
 
-    # Kâr marjı veya indirim bilgisi varsa formata ekle
-    margin = data.get('margin', 0)
-    market_avg = data.get('market_avg', 0)
-    
-    margin_text = ""
-    if margin > 0:
+    @property
+    def configured(self) -> bool:
+        return bool(self.token)
+
+    async def send(self, chat_id: str, text: str) -> bool:
+        if not self.token or not chat_id:
+            logger.warning("Telegram token/chat_id eksik; mesaj gönderilemedi.")
+            return False
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": text[:MAX_LEN], "disable_web_page_preview": True}
+        owns = self._client is None
+        client = self._client or httpx.AsyncClient(timeout=15.0)
         try:
-            margin_str = f"{int(margin):,}".replace(',', '.')
-            margin_text = f"🔥 Piyasanın ~{margin_str} TL altında!\n"
-        except:
-            pass
+            for attempt in range(1, 4):
+                try:
+                    resp = await client.post(url, json=payload)
+                except httpx.HTTPError as exc:
+                    # İstisna metni token içeren URL taşıyabilir; sadece türünü logla.
+                    logger.warning(f"Telegram ağ hatası ({attempt}/3): {type(exc).__name__}")
+                    await asyncio.sleep(2 * attempt)
+                    continue
+                if resp.status_code == 200:
+                    return True
+                if resp.status_code == 429:
+                    try:
+                        wait = float(resp.json().get("parameters", {}).get("retry_after", 5))
+                    except ValueError:
+                        wait = 5.0
+                    logger.warning(f"Telegram limit: {wait}s bekleniyor")
+                    await asyncio.sleep(wait + 0.5)
+                    continue
+                if resp.status_code >= 500:
+                    await asyncio.sleep(2 * attempt)
+                    continue
+                # 400/403/404: kalıcı hata (bot engellendi, chat bulunamadı, ...)
+                logger.error(f"Telegram reddetti (chat {chat_id}): HTTP {resp.status_code} {resp.text[:160]}")
+                return False
+            return False
+        finally:
+            if owns:
+                await client.aclose()
 
-    message = (
-        f"🚗 Yeni Fırsat İlanı!\n"
-        f"🔹 Marka / Model: {data.get('brand', '')} {data.get('model', '')}\n"
-        f"📅 Yıl: {data.get('year', '')}\n"
-        f"🛣️ KM: {km_str}\n"
-        f"📍 Şehir: {data.get('city', '')}\n"
-        f"💰 Fiyat: {fiyat_str} TL\n"
-        f"{margin_text}"
-        f"🔗 İlan Linki: {data.get('url', '')}"
-    )
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "disable_web_page_preview": True # İlan resminin veya sayfasının chat'i kaplamaması için
-    }
-
+async def enqueue_alert(session: AsyncSession, *, source_listing_id: str, mode: str, dealer_id: str,
+                        chat_id: str, text: str, reason: str) -> Alert | None:
+    """Alert kaydı oluşturur. Aynı ilan+mod+galerici için zaten varsa None (mükerrer bildirim yok)."""
+    alert = Alert(source_listing_id=source_listing_id, mode=mode, dealer_id=dealer_id,
+                  chat_id=chat_id, text=text, reason=reason)
     try:
-        response = requests.post(url, json=payload, timeout=10.0)
-        if response.status_code == 200:
-            logger.info(f"Telegram notification sent for {data.get('source_listing_id')}")
+        async with session.begin_nested():
+            session.add(alert)
+            await session.flush()
+    except IntegrityError:
+        return None
+    return alert
+
+
+async def flush_alerts(session: AsyncSession, telegram: Telegram) -> tuple[int, int]:
+    """PENDING bildirimleri gönderir. (gönderilen, hâlâ bekleyen) döner."""
+    cutoff = datetime.utcnow() - PENDING_MAX_AGE
+    rows = (await session.execute(
+        select(Alert).where(Alert.status == "PENDING").order_by(Alert.id)
+    )).scalars().all()
+    sent = still = 0
+    for alert in rows:
+        if alert.created_at and alert.created_at < cutoff or alert.attempts >= MAX_ATTEMPTS:
+            alert.status = "FAILED"
+            continue
+        alert.attempts += 1
+        if await telegram.send(alert.chat_id, alert.text):
+            alert.status = "SENT"
+            alert.sent_at = datetime.utcnow()
+            sent += 1
+            logger.success(f"Telegram bildirimi gönderildi [{alert.mode}/{alert.dealer_id or '-'}] {alert.source_listing_id}")
         else:
-            logger.error(f"Failed to send Telegram notification: {response.text}")
-    except Exception as e:
-        logger.error(f"Error sending Telegram notification: {e}")
+            still += 1
+        await asyncio.sleep(0.3)  # Telegram saniyede ~1 mesaj/sohbet toleransı
+    await session.commit()
+    return sent, still

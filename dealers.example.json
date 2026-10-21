@@ -1,0 +1,34 @@
+{
+  "dealers": [
+    {
+      "id": "ahmet-oto",
+      "name": "Ahmet Oto Galeri",
+      "chat_id": "123456789",
+      "market_check": true,
+      "market_discount_pct": 15,
+      "allow_damaged": false,
+      "rules": [
+        {
+          "brand": "Mercedes-Benz",
+          "model": "C 200",
+          "year_min": 2016,
+          "year_max": 2020,
+          "km_max": 150000,
+          "max_price": 1450000,
+          "search_url": "https://www.arabam.com/ikinci-el/otomobil/mercedes-benz-c-serisi"
+        },
+        { "brand": "Mercedes-Benz", "model": "E 180", "max_price": 1900000 },
+        { "brand": "BMW", "model": "3.20", "year_min": 2015 }
+      ]
+    },
+    {
+      "id": "mehmet-galeri",
+      "name": "Mehmet Galeri",
+      "chat_id": "987654321",
+      "rules": [
+        { "brand": "Fiat", "model": "Egea", "max_price": 700000 },
+        { "brand": "Renault", "model": "Clio", "year_min": 2018, "max_price": 750000 }
+      ]
+    }
+  ]
+}

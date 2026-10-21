@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime, ForeignKey, Index, Text
+from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from src.database import Base
 
@@ -49,3 +49,40 @@ class Opportunity(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     listing = relationship("Listing")
+
+
+class Alert(Base):
+    """Giden Telegram mesajları (outbox). Gönderim başarısız olursa bir sonraki döngüde tekrar denenir."""
+    __tablename__ = "alerts"
+    id = Column(Integer, primary_key=True, index=True)
+    source_listing_id = Column(String, nullable=False, index=True)
+    mode = Column(String, nullable=False)          # market | dealer
+    dealer_id = Column(String, nullable=False, default="")
+    chat_id = Column(String, nullable=False)
+    text = Column(Text, nullable=False)
+    reason = Column(String, nullable=False, default="")
+    status = Column(String, nullable=False, default="PENDING")  # PENDING, SENT, FAILED
+    attempts = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (UniqueConstraint("source_listing_id", "mode", "dealer_id", name="uq_alert_target"),)
+
+
+class PriceCache(Base):
+    """Perplexity piyasa fiyatı sonuçları (maliyet ve rate-limit için)."""
+    __tablename__ = "price_cache"
+    id = Column(Integer, primary_key=True, index=True)
+    cache_key = Column(String, unique=True, nullable=False, index=True)
+    average = Column(Float, nullable=False)
+    low = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BotState(Base):
+    """Küçük anahtar-değer deposu: sağlık sayaçları, uyarı soğuma süreleri."""
+    __tablename__ = "bot_state"
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False, default="")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

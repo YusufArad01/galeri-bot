@@ -4,3 +4,16 @@ __pycache__/
 .venv/
 venv/
 logs/
+
+# Yerel veritabanı, loglar, tanılama çıktıları
+*.sqlite
+*.log
+latest_logs.txt
+scratch*
+vavacars_*
+# Railway yardımcı betikleri sabit token içeriyor; depoya girmesin
+railway_*.py
+check_latest_logs.py
+# Galerici profili (müşteri chat ID'leri). Örnek: dealers.example.json
+dealers.json
+railway_auth.py

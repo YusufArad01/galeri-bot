@@ -1,209 +1,121 @@
 import asyncio
+
 from loguru import logger
-from src.database import engine, Base
-from src.database import AsyncSessionLocal
+
+from src.config import settings
+from src.database import engine, Base, AsyncSessionLocal
+from src.health import CycleStats, Health
+from src.modes import dealer as dealer_mode
+from src.notifications import Telegram
+from src.pipeline import build_targets, run_cycle
+from src.pricing.perplexity import PriceService
 from src.proxy.manager import ProxyManager
 from src.scraper.engine import ScraperEngine
 from src.scraper.vavacars_engine import VavaCarsEngine
-from src.config import settings
-from src.models.domain import Listing
-from sqlalchemy import select
 
-import httpx
-import re
-import json
-import os
 
-async def get_perplexity_market_average(brand: str, model: str, year: int, km: int) -> float:
-    api_key = os.environ.get("PERPLEXITY_API_KEY")
-    if not api_key:
-        logger.error("PERPLEXITY_API_KEY is missing!")
-        return 0.0
-        
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    prompt = f"Türkiye ikinci el araç piyasasında {year} model {brand} {model} ({km} Kilometrede) normal durumdaki (ufak boya/değişen olabilir ama pert/ağır hasarlı DEĞİL) bir aracın ortalama güncel satış fiyatı nedir? SADECE tek bir rakam dön. Örnek: 850000"
-    
-    payload = {
-        "model": "sonar",
-        "messages": [
-            {"role": "system", "content": "Sen sadece araçların güncel ortalama piyasa fiyatını 'rakam' olarak veren bir API'sin. Harf, virgül veya nokta kullanma. Sadece tek bir rakam dön."},
-            {"role": "user", "content": prompt}
-        ]
-    }
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post("https://api.perplexity.ai/chat/completions", headers=headers, json=payload, timeout=30.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                numbers = re.findall(r'\d+', content.replace('.', '').replace(',', '').replace(' ', ''))
-                if numbers:
-                    # Rakam çok uzunsa veya saçmaysa koruma (örn. milyonları birleştirirse)
-                    val = float(numbers[0])
-                    if val > 100000 and val < 20000000:
-                        return val
-    except Exception as e:
-        logger.error(f"Perplexity API error: {e}")
-    return 0.0
+def engine_factory(kind: str, proxy_manager: ProxyManager):
+    return VavaCarsEngine(proxy_manager) if kind == "vava" else ScraperEngine(proxy_manager)
+
 
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database initialized.")
 
-import os
-import random
 
-async def run_scraper():
+def load_dealers_safe(previous: list[dealer_mode.Dealer]) -> tuple[list[dealer_mode.Dealer], str | None]:
+    """Profil dosyası bozuksa botu düşürmez: son geçerli listeyle devam eder, hatayı döner."""
+    try:
+        return dealer_mode.load_dealers(settings.DEALERS_JSON, settings.DEALERS_FILE), None
+    except (ValueError, OSError) as exc:  # DealerConfigError ve JSONDecodeError ValueError alt sınıfı
+        return previous, str(exc)
+
+
+def describe_mode(dealers: list[dealer_mode.Dealer]) -> str:
+    lines = [f"Mod: {settings.BOT_MODE}"]
+    if "market" in settings.modes:
+        lines.append(f"• Piyasa: ortalamanın %{settings.DISCOUNT_THRESHOLD_PCT:g} altı")
+    if "dealer" in settings.modes:
+        rules = sum(len(d.rules) for d in dealers)
+        lines.append(f"• Galerici: {len(dealers)} galerici, {rules} kural")
+    lines.append(f"• Döngü: {settings.SCRAPE_INTERVAL_MINUTES} dk, en çok {settings.MAX_LISTINGS_PER_CYCLE} yeni ilan")
+    return "\n".join(lines)
+
+
+async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], dealer_error: str | None) -> CycleStats:
+    stats = CycleStats()
     async with AsyncSessionLocal() as session:
-        proxy_manager = ProxyManager(session)
-        target = settings.TARGET_URL
-        if not target:
-            logger.error("TARGET_URL is not set.")
-            return
-            
-        if "vava.cars" in target:
-            scraper = VavaCarsEngine(proxy_manager)
-            # VavaCars base target
-            if "/buy/cars" not in target:
-                target = "https://tr.vava.cars/buy/cars"
-        else:
-            scraper = ScraperEngine(proxy_manager)
-            # Ensure 'En Yeni' sorting is applied for Arabam.com
-            if "?" not in target:
-                target += "?sort=DateDesc"
-            elif "sort=" not in target:
-                target += "&sort=DateDesc"
+        health = Health(session, telegram, settings.admin_chat,
+                        settings.HEARTBEAT_HOURS, settings.BLOCKED_CYCLES_ALERT)
+        if dealer_error:
+            await health.notify_admin("dealer_cfg", f"⚠️ Galerici profil dosyası okunamadı, son geçerli ayarla devam ediliyor:\n{dealer_error}", cooldown_hours=12)
 
-        logger.info(f"Fetching category links from: {target}")
+        targets = build_targets(settings.target_urls, dealers, settings.modes)
+        if not targets:
+            logger.error("TARGET_URL tanımlı değil (ve galerici kurallarında search_url yok).")
+            await health.notify_admin("no_target", "⚠️ TARGET_URL tanımlı değil; taranacak sayfa yok.", cooldown_hours=12)
+            return stats
+
+        prices = PriceService(session, settings.PERPLEXITY_API_KEY, settings.PERPLEXITY_MODEL, settings.PRICE_CACHE_DAYS)
         try:
-            links = await scraper.fetch_category_links(target)
-            logger.success(f"Found {len(links)} listings.")
-            
-            # Öğrenme hızını artırmak için limit 10'dan 40'a çıkarıldı
-            for link in links[:40]:
-                logger.info(f"Scraping detail page: {link}")
-                
-                # Anti-Bot Jitter Mechanism
-                jitter = random.uniform(3.0, 7.0)
-                logger.debug(f"Applying anti-bot jitter: sleeping for {jitter:.2f}s")
-                await asyncio.sleep(jitter)
-                
-                try:
-                    data = await scraper.fetch_listing_data(link)
-                    logger.success(f"Scraped Data: {data}")
-                    
-                    # 0. Ön Eleme (Pert, Ağır Hasar, Yaşlı/Sıradan)
-                    if data.get('is_disqualified') or data.get('is_heavy_damage'):
-                        logger.info(f"Listing {link} disqualified (heavy damage, too old, or >2 değişen/>4 boya). Skipping.")
-                        continue
-                        
-                    # Deduplication and DB Persistence
-                    db_data = data.copy()
-                    db_data.pop('seller_type', None)
-                    db_data.pop('is_heavy_damage', None)
-                    db_data.pop('is_disqualified', None)
-                    
-                    result = await session.execute(select(Listing).where(Listing.source_listing_id == db_data["source_listing_id"]))
-                    existing = result.scalar_one_or_none()
-                    
-                    if existing:
-                        logger.info(f"Listing {db_data['source_listing_id']} already exists in Database. Skipping.")
-                    else:
-                        new_listing = Listing(**db_data)
-                        session.add(new_listing)
-                        
-                        # --- Piyasa Anomalisi ve Akıllı Fiyat Analizi ---
-                        brand = data.get('brand', '')
-                        model = data.get('model', '')
-                        year = data.get('year', 0)
-                        km = data.get('km', 0)
-                        price = data.get('price', 0.0)
-                        
-                        from sqlalchemy import func
-                        stmt = select(func.avg(Listing.price), func.count(Listing.id)).where(
-                            Listing.brand == brand,
-                            Listing.model == model,
-                            Listing.year == year
-                        )
-                        stats = await session.execute(stmt)
-                        row = stats.first()
-                        avg_price = row[0] if row and row[0] else 0
-                        sample_size = row[1] if row and row[1] else 0
-                        
-                        is_opportunity = False
-                        margin = 0
-                        market_avg = avg_price
-                        
-                        # Önce ağır hasar filtresi (API maliyetinden kaçınmak için)
-                        if data.get('is_heavy_damage'):
-                            is_opportunity = False
-                            logger.info("Listing rejected: Heavy damage / Pert detected.")
-                        else:
-                            # 1. Kelime Bazlı Fırsat
-                            keywords = ['acil', 'acilinden', 'aciliyetten', 'fırsat', 'nakit']
-                            search_text = (data.get('title', '') + " " + data.get('description', '')).lower()
-                            keyword_match = any(word in search_text for word in keywords)
-                            
-                            # 2. Fiyat Anomalisi Analizi
-                            if sample_size < 2 or market_avg == 0:
-                                logger.info(f"Not enough local DB data for {brand} {model} {year}. Asking Perplexity AI...")
-                                px_avg = await get_perplexity_market_average(brand, model, year, km)
-                                if px_avg > 0:
-                                    logger.info(f"Perplexity AI estimates market average: {px_avg} TL")
-                                    market_avg = px_avg
-                                else:
-                                    logger.warning("Perplexity failed to return a valid average.")
-                                
-                            if market_avg > 0:
-                                discount = market_avg - price
-                                discount_percentage = (discount / market_avg) * 100
-                                
-                                if discount_percentage >= 10:
-                                    is_opportunity = True
-                                    margin = discount
-                                    logger.info(f"Anomaly detected! {discount_percentage:.1f}% below market. Est. Margin: {margin} TL")
-                            
-                            # Keywords will not bypass the math check anymore
-                        # Veritabanına kaydet
-                        await session.commit()
-                        logger.success(f"Successfully saved new listing to Database: {data['source_listing_id']}")
-                        
-                        if is_opportunity:
-                            data['margin'] = margin
-                            data['market_avg'] = market_avg
-                            
-                            # Trigger Telegram Notification asynchronously
-                            from src.notifications import send_telegram_notification
-                            asyncio.create_task(asyncio.to_thread(send_telegram_notification, data))
-                            logger.info(f"Telegram notification triggered for {data['source_listing_id']}")
-                        else:
-                            logger.info(f"Listing {data['source_listing_id']} is not an opportunity. No notification sent.")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to scrape {link}: {e}")
-        except Exception as e:
-            logger.error(f"Category scraping failed: {e}")
+            await asyncio.wait_for(
+                run_cycle(
+                    session=session, engine_factory=engine_factory, telegram=telegram, prices=prices,
+                    dealers=dealers, targets=targets, modes=settings.modes,
+                    market_chat_id=settings.TELEGRAM_CHAT_ID,
+                    threshold_pct=settings.DISCOUNT_THRESHOLD_PCT,
+                    suspicious_pct=settings.SUSPICIOUS_DISCOUNT_PCT,
+                    max_listings=settings.MAX_LISTINGS_PER_CYCLE,
+                    jitter=(settings.JITTER_MIN_SECONDS, settings.JITTER_MAX_SECONDS),
+                    stats=stats,
+                ),
+                timeout=settings.CYCLE_TIMEOUT_MINUTES * 60,
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Cycle timed out after {settings.CYCLE_TIMEOUT_MINUTES} minutes; aborted.")
+            stats.timed_out = True
+            await session.rollback()
+        except Exception as exc:
+            logger.exception(f"Fatal error in scraper cycle: {exc}")
+            stats.scrape_errors += 1
+            await session.rollback()
+            await health.notify_admin("fatal", f"❌ Tarama döngüsünde beklenmeyen hata: {type(exc).__name__}: {str(exc)[:200]}", cooldown_hours=3)
+        stats.price_calls = prices.calls
+        stats.price_failures = prices.failures
+        stats.price_error_kind = stats.price_error_kind or prices.last_error_kind
+        await health.record_cycle(stats)
+    logger.info(f"Cycle stats: {stats}")
+    return stats
+
 
 async def main():
-    logger.info("Starting Arbitrage Engine in Server Mode (Railway Ready)...")
+    logger.info(f"Starting Arbitrage Engine (mode={settings.BOT_MODE})...")
+    settings.modes  # geçersiz BOT_MODE'u başlangıçta yakala
     await init_db()
-    
-    interval_minutes = int(os.environ.get("SCRAPE_INTERVAL_MINUTES", 30))
-    
+
+    telegram = Telegram(settings.TELEGRAM_BOT_TOKEN)
+    if not telegram.configured or not settings.TELEGRAM_CHAT_ID:
+        logger.error("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID eksik: bildirim GİDEMEZ.")
+
+    async with AsyncSessionLocal() as session:
+        await ProxyManager(session).seed(settings.proxy_urls)
+
+    dealers, dealer_error = load_dealers_safe([])
+    async with AsyncSessionLocal() as session:
+        health = Health(session, telegram, settings.admin_chat, settings.HEARTBEAT_HOURS, settings.BLOCKED_CYCLES_ALERT)
+        await health.startup(describe_mode(dealers))
+
     while True:
+        if "dealer" in settings.modes:
+            dealers, dealer_error = load_dealers_safe(dealers)
         try:
-            await run_scraper()
-        except Exception as e:
-            logger.error(f"Fatal error in scraper cycle: {e}")
-            
-        logger.info(f"Cycle finished. Waiting for {interval_minutes} minutes before the next run...")
-        await asyncio.sleep(interval_minutes * 60)
+            await one_cycle(telegram, dealers, dealer_error)
+        except Exception as exc:  # son çare: döngü ne olursa olsun devam etsin
+            logger.exception(f"Unhandled error outside cycle: {exc}")
+        logger.info(f"Cycle finished. Waiting for {settings.SCRAPE_INTERVAL_MINUTES} minutes before the next run...")
+        await asyncio.sleep(settings.SCRAPE_INTERVAL_MINUTES * 60)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
-
