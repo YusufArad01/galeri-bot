@@ -91,7 +91,7 @@ async def process_listing(data: dict, *, session: AsyncSession, prices: PriceSer
             deferred = exc
 
     if "dealer" in modes and dealers and data.get("year") and float(data["price"]) >= market_mode.MIN_VALID_PRICE:
-        dealer_cands, dealer_err = await dealer_mode.evaluate(data, dealers, prices, market_chat_id)
+        dealer_cands, dealer_err = await dealer_mode.evaluate(data, dealers, prices, market_chat_id, bench)
         candidates += dealer_cands
         deferred = deferred or dealer_err
 
@@ -158,7 +158,9 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                 links.extend(got)
             links = list(dict.fromkeys(links))
 
-            bench = Benchmark(session, scraper, bench_cfg or BenchConfig())                 if compare_on and hasattr(scraper, "fetch_list_rows") else None
+            wants_bench = compare_on or "dealer" in modes  # galerici piyasa kontrolü de aynı karşılaştırma sayfalarını kullanır
+            bench = Benchmark(session, scraper, bench_cfg or BenchConfig()) \
+                if wants_bench and hasattr(scraper, "fetch_list_rows") else None
             ids = {link: scraper.source_id(link) for link in links}
             known = await known_ids(session, list(ids.values()))
             new_links = [link for link in links if ids[link] not in known]

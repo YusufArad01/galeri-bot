@@ -146,10 +146,12 @@ def search_urls(dealers: list[Dealer]) -> list[str]:
 
 
 async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
-                   fallback_chat_id: str) -> tuple[list[Candidate], PriceServiceError | None]:
+                   fallback_chat_id: str, bench=None) -> tuple[list[Candidate], PriceServiceError | None]:
     """Her galerici için en fazla bir bildirim üretir: (bildirimler, ertelenen_hata).
 
-    Perplexity yalnızca kurala uyan + market_check açık galericilerde çağrılır. Hedef fiyat
+    Piyasa kontrolü (market_check) önce arabam'daki aynı donanım/motor/modeldeki güncel ilanlarla
+    yapılır (bench); karşılaştırma bulunamazsa Perplexity tahminine düşülür. İkisi de yalnızca
+    kurala uyan + market_check açık galericilerde çalışır. Hedef fiyat
     zaten tetiklenmişse piyasa servisi çökse bile o galericinin bildirimi üretilir. Servis
     hatası yüzünden değerlendirilemeyen galerici varsa hata ayrıca döner; çağrıcı, başarılı
     bildirimleri kuyruğa alıp ilanı sonraki döngüde yeniden değerlendirir (mükerrer bildirim
@@ -168,12 +170,19 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
         target_hits = [r for r in matched if r.max_price is not None and price <= r.max_price]
 
         est: PriceEstimate | None = None
+        source = ""   # piyasa değerinin kaynağı: karşılaştırma düzeyi ya da "tahmin"
         market_hit = False
         market_err: PriceServiceError | None = None
         if dealer.market_check:
             try:
-                est = await prices.estimate(data["brand"], data["model"], data.get("trim", ""),
-                                            data["year"], data.get("km") or 0)
+                res = await bench.stats(data) if bench is not None else None
+                if res is not None:
+                    est = PriceEstimate(res.median, None, None, "benchmark")
+                    source = f"{res.level} {res.comparables} güncel ilanın ortası"
+                else:
+                    est = await prices.estimate(data["brand"], data["model"], data.get("trim", ""),
+                                                data["year"], data.get("km") or 0)
+                    source = "Piyasa ort. (tahmin)"
             except PriceServiceError as exc:
                 if not target_hits:
                     deferred = deferred or exc
@@ -193,7 +202,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
         if est and est.average > 0:
             pct = discount_pct(price, est.average)
             tag = "✅" if market_hit else "ℹ️"
-            lines.append(f"📊 {tag} Piyasa ort.: {fmt_tl(est.average)} TL (ilan %{fmt_pct(pct)} {'altında' if pct >= 0 else 'üstünde'})")
+            lines.append(f"📊 {tag} {source}: {fmt_tl(est.average)} TL (ilan %{fmt_pct(pct)} {'altında' if pct >= 0 else 'üstünde'})")
             if market_hit:
                 reasons.append(f"piyasa -%{fmt_pct(pct)}")
         elif market_err is not None:

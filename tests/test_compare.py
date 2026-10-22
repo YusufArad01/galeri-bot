@@ -9,7 +9,8 @@ from src.models.domain import Listing
 from src.modes.compare import CompareConfig, release
 from src.notifications import flush_alerts
 from src.parsing import bench_urls_from_crumbs, parse_list_row
-from tests.test_pipeline import FakeScraper, PipelineBase, car
+from src.modes.dealer import parse_dealers
+from tests.test_pipeline import DEALERS, FakeScraper, PipelineBase, car
 
 BASE = "https://www.arabam.com/ikinci-el/otomobil/renault-megane"
 TRIM = BASE + "-1-5-dci-touch"
@@ -256,3 +257,16 @@ class KmAdjustTests(PipelineBase):
         self.assertEqual(b._adjust(1_000_000, 500_000, 100_000), 1_300_000.0)   # +%30 üst sınır
         self.assertEqual(b._adjust(1_000_000, 100_000, 500_000), 700_000.0)     # -%30 alt sınır
         self.assertEqual(b._adjust(1_000_000, 0, 100_000), 1_000_000)           # km bilinmiyorsa dokunma
+
+
+class DealerBenchTests(PipelineBase):
+    async def test_market_check_uses_arabam_listings_not_perplexity(self):
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 7)]
+        self.pplx_status = 500                                   # Perplexity çökse bile galerici mesajı gelir
+        FakeScraper.pages[self.URL] = [listing(1, 840_000)]
+        dealers = parse_dealers({"dealers": [DEALERS["dealers"][1]]})   # market_check açık galerici
+        async with self.Session() as s:
+            st = await self.cycle(s, modes=("dealer",), dealers=dealers)
+        self.assertEqual((st.deferred, self.pplx_calls), (0, 0))
+        self.assertEqual([m["chat_id"] for m in self.sent], ["222"])
+        self.assertIn("Aynı donanımdaki 6 güncel ilanın ortası", self.sent[0]["text"])

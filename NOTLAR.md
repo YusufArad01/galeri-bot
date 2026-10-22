@@ -16,8 +16,8 @@ Yazmadan önce: API'nin proxy siparişini/listesini destekleyip desteklemediği 
 Koruma şartları: ayda en fazla 1 sipariş, tek sipariş fiyat üst sınırı, öncesinde/sonrasında Telegram mesajı, hatada tekrar deneme yok.
 
 ## Yapılacaklar (sırayla)
-1. Kilometre düzeltmesi (çok km yapmış araçlar "ucuz" görünüyor) — dal: `gelistirme`
-2. Galerici modunu arabam benzer ilan karşılaştırmasına bağlamak (şu an eski Perplexity)
+1. ~~Kilometre düzeltmesi~~ YAPILDI, dal `gelistirme` (10.000 km başına %2, 34 grupta ölçüldü). Railway'e gönderilmedi.
+2. ~~Galerici modunu arabam benzer ilan karşılaştırmasına bağlamak~~ YAPILDI, dal `gelistirme` (Perplexity yedek). Railway'e gönderilmedi.
 3. Müşterinin kuralı Telegram'dan ekleyip değiştirebilmesi
 4. Arabam resmî veri / iş ortağı yolu (EİDS entegrasyonu olan firma) araştırması
 5. Gerçek galericiyle pilot, ilk 2 hafta mesajları "iyi/boş" diye işaretleme
