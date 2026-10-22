@@ -33,6 +33,8 @@ class BenchConfig:
     min_comparables: int = 5
     year_tolerance: int = 1
     km_tolerance_pct: float = 40.0
+    # 10.000 km başına fiyat düşüşü (%). 22.10.2026'da 34 model/yıl grubunda ölçüldü: medyan ~%2.
+    km_adjust_pct_per_10k: float = 2.0
     ttl_hours: float = 6.0
     max_fetch_per_cycle: int = 8
 
@@ -87,12 +89,20 @@ class Benchmark:
         self._memo[url] = rows
         return rows
 
+    def _adjust(self, price: float, peer_km: int, km: int) -> float:
+        """Benzer ilanın fiyatını kıyaslanan aracın kilometresine göre düzeltir: daha çok yürümüş
+        benzer doğal olarak ucuzdur, aksi halde çok km yapmış araçlar sahte 'fırsat' görünür."""
+        if not km or not peer_km:
+            return price
+        factor = 1 + self.cfg.km_adjust_pct_per_10k / 100.0 * (peer_km - km) / 10_000
+        return price * min(1.3, max(0.7, factor))
+
     async def stats(self, data: dict) -> BenchResult | None:
         """En özel sayfadan başlayıp yeterli benzer ilan bulunan ilk düzeyin medyanı."""
         year, km = data.get("year") or 0, data.get("km") or 0
         for level, url in zip(LEVELS, data.get("bench_urls") or []):
             comps = [
-                r["price"] for r in await self.rows(url)
+                self._adjust(r["price"], r["km"], km) for r in await self.rows(url)
                 if r["id"] != data["source_listing_id"] and r["price"] >= MIN_PRICE
                 and abs(r["year"] - year) <= self.cfg.year_tolerance
                 and _km_close(km, r["km"], self.cfg.km_tolerance_pct)

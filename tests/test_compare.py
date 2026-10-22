@@ -227,3 +227,32 @@ class ScheduleTests(PipelineBase):
                 bench_cfg=BenchConfig())                               # aday havuza girer, hiçbiri gönderilmez
             self.assertEqual(await release(s, cfg, "ADMIN", now=night_tr), 0)   # gece: gönderilmez
             self.assertEqual(await release(s, cfg, "ADMIN", now=day_tr), 1)     # gündüz: gider
+
+
+class KmAdjustTests(PipelineBase):
+    def lists(self):
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000, km=100_000) for i in range(1, 7)]
+
+    async def test_high_km_car_is_not_a_false_deal(self):
+        self.lists()
+        cfg = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, max_items=1, release_minutes=0)
+        # 200 bin km, 800 bin TL: benzerleri (100 bin km, 1 milyon) kilometreye göre düzeltilince ~800 bin eder
+        FakeScraper.pages[self.URL] = [listing(1, 800_000, km=200_000)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig(km_tolerance_pct=120))
+        self.assertEqual(self.sent, [])
+
+    async def test_same_price_with_comparable_km_is_a_deal(self):
+        self.lists()
+        cfg = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, max_items=1, release_minutes=0)
+        FakeScraper.pages[self.URL] = [listing(1, 800_000, km=100_000)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
+        self.assertEqual(len(self.sent), 1)
+
+    async def test_adjustment_is_capped(self):
+        from src.benchmark import Benchmark
+        b = Benchmark(None, None, BenchConfig())
+        self.assertEqual(b._adjust(1_000_000, 500_000, 100_000), 1_300_000.0)   # +%30 üst sınır
+        self.assertEqual(b._adjust(1_000_000, 100_000, 500_000), 700_000.0)     # -%30 alt sınır
+        self.assertEqual(b._adjust(1_000_000, 0, 100_000), 1_000_000)           # km bilinmiyorsa dokunma
