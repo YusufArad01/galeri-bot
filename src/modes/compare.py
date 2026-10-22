@@ -28,10 +28,12 @@ _SHOWN = ("brand", "model", "trim", "year", "km", "city", "seller_type", "price"
 @dataclass(frozen=True)
 class CompareConfig:
     min_discount_pct: float = 15.0
-    max_items: int = 1            # her gönderimde en iyi kaç ilan
-    release_minutes: int = 60     # iki gönderim arası en az süre
+    max_items: int = 2            # her gönderimde en iyi kaç ilan
+    release_minutes: int = 120    # iki gönderim arası en az süre: bu pencerede toplananlardan en iyileri seçilir
     fresh_hours: float = 3.0      # bundan eski aday gönderilmez (ilan satılmış olabilir)
     daily_max: int = 15
+    active_start: int = 8         # Türkiye saatiyle gönderim yapılan saatler [başlangıç, bitiş);
+    active_end: int = 23          # gece mesajı günlük hakkı boşa harcamasın
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,8 @@ def _from_payload(raw: str) -> Entry:
 async def release(session: AsyncSession, cfg: CompareConfig, chat_id: str, now: datetime | None = None) -> int:
     """Zamanı geldiyse havuzdaki en iyi aday(lar)ı gönderim kuyruğuna alır. Kuyruğa alınan sayıyı döner."""
     now = now or datetime.utcnow()
+    if not cfg.active_start <= (now + TR_OFFSET).hour < cfg.active_end:
+        return 0
     state = (await session.execute(select(BotState).where(BotState.key == "compare_last_release"))).scalars().first()
     if state and now - datetime.fromisoformat(state.value) < timedelta(minutes=cfg.release_minutes):
         return 0

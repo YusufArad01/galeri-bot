@@ -12,7 +12,7 @@ Railway'de `python main.py` ile çalışır; veri SQLite'tadır (`DB_PATH`).
 |---|---|
 | `market` (varsayılan) — **Sürüm 1** | İlanı okur, Perplexity'den aynı araç için piyasa ortalamasını çeker, fiyat ortalamanın **%15** (ayarlı) altındaysa `TELEGRAM_CHAT_ID`'ye bildirir. |
 | `dealer` — **Sürüm 2** | Galerici profillerine göre çalışır. Her galericinin uzman olduğu marka/model ve hedef fiyatı vardır; hedef fiyatın altındaki ilan o galericinin kendi sohbetine gider. İsteğe bağlı `market_check` ile piyasa ortalamasının %X altı da yakalanır. |
-| `compare` — **Sürüm 3** | Perplexity kullanmaz. Yeni ilanlar filtrelerden (hasar, yaş/fiyat) geçirilir; kalanlar arabam'daki **aynı donanım → motor → model** sayfalarındaki güncel ilanların (benzer yıl/km) fiyat ortasıyla kıyaslanır. Benzerlerinden en az %15 ucuz olanlar aday havuzuna girer; **saatte bir havuzdan en iyisi gönderilir, günde en çok 15**. Aşırı ucuz (%35+) ilanlar şüpheli sayılıp sıralamada geriye düşer. Sayfalar 6 saat önbellekte. |
+| `compare` — **Sürüm 3** | Perplexity kullanmaz. Yeni ilanlar filtrelerden (hasar, yaş/fiyat) geçirilir; kalanlar arabam'daki **aynı donanım → motor → model** sayfalarındaki güncel ilanların (benzer yıl/km) fiyat ortasıyla kıyaslanır. Benzerlerinden en az %15 ucuz olanlar aday havuzuna girer; **2 saatte bir havuzdan en iyi 2'si gönderilir, günde en çok 15, yalnızca 08:00-23:00 (Türkiye saati)**. Aşırı ucuz (%35+) ilanlar şüpheli sayılıp sıralamada geriye düşer. Sayfalar 6 saat önbellekte. |
 | `both` / `all` | `both` = market+dealer, `all` = üçü birlikte. Virgülle de birleştirilir: `market,compare`. |
 
 İki sürümü ayrı Railway servisleri olarak çalıştırmak için aynı depoyu iki servise bağlayıp yalnızca
@@ -49,7 +49,9 @@ ayarla devam eder ve yöneticiye uyarı gönderir.
 | `MAX_LISTINGS_PER_CYCLE` | `40` | Döngüde incelenecek en çok yeni ilan. |
 | `PAGES_PER_TARGET` | `2` | Liste sayfasının kaç sayfası taransın (sayfa başı ~20 ilan). |
 | `COMPARE_MIN_DISCOUNT_PCT` / `COMPARE_MAX_ITEMS` | `15` / `1` | Aday olmak için en az ucuzluk (%) ve her gönderimde en iyi kaç ilan. |
-| `COMPARE_RELEASE_MINUTES` / `COMPARE_FRESH_HOURS` / `COMPARE_DAILY_MAX` | `60` / `3` / `15` | Gönderimler arası süre, adayın en çok yaşı, günlük mesaj sınırı (Türkiye saatiyle). |
+| `COMPARE_RELEASE_MINUTES` / `COMPARE_FRESH_HOURS` / `COMPARE_DAILY_MAX` | `120` / `3` / `15` | Gönderimler arası süre (bu pencerede toplananlardan en iyiler seçilir), adayın en çok yaşı, günlük mesaj sınırı. |
+| `COMPARE_MAX_ITEMS` | `2` | Her gönderimde en iyi kaç ilan. |
+| `COMPARE_ACTIVE_START` / `COMPARE_ACTIVE_END` | `8` / `23` | Gönderim saatleri (Türkiye saati). Gece mesajı günlük hakkı harcamasın. |
 | `COMPARE_MIN_COMPARABLES` / `COMPARE_YEAR_TOLERANCE` / `COMPARE_KM_TOLERANCE_PCT` | `5` / `1` / `40` | En az benzer ilan, yıl farkı, km farkı (%). |
 | `BENCH_TTL_HOURS` / `BENCH_MAX_FETCH_PER_CYCLE` | `6` / `8` | Karşılaştırma sayfası önbellek süresi ve turda açılacak en çok yeni sayfa. |
 | `CYCLE_TIMEOUT_MINUTES` | `40` | Takılan döngüyü iptal eder. |

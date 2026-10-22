@@ -52,7 +52,7 @@ class ParseTests(PipelineBase):
 
 
 class CompareModeTests(PipelineBase):
-    CFG = CompareConfig(min_discount_pct=10.0, max_items=1, release_minutes=0)
+    CFG = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, max_items=1, release_minutes=0)
 
     def lists(self):
         # donanım sayfasında yeterli ilan yok (3), motor sayfasında 6 benzer ilan var
@@ -153,7 +153,7 @@ class ReleaseTests(PipelineBase):
 
     async def test_spacing_keeps_candidates_until_next_slot(self):
         self.lists()
-        cfg = CompareConfig(min_discount_pct=10.0, release_minutes=60)
+        cfg = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, max_items=1, release_minutes=60)
         FakeScraper.pages[self.URL] = [listing(1, 850_000)]
         async with self.Session() as s:
             await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
@@ -171,7 +171,7 @@ class ReleaseTests(PipelineBase):
 
     async def test_daily_cap(self):
         self.lists()
-        cfg = CompareConfig(min_discount_pct=10.0, release_minutes=0, daily_max=2)
+        cfg = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, max_items=1, release_minutes=0, daily_max=2)
         async with self.Session() as s:
             for i in (1, 2, 3):
                 FakeScraper.pages[self.URL] = [listing(i, 800_000 + i)]
@@ -180,7 +180,7 @@ class ReleaseTests(PipelineBase):
 
     async def test_absurdly_cheap_ranks_below_plausible_deal(self):
         self.lists()
-        cfg = CompareConfig(min_discount_pct=10.0, release_minutes=60)
+        cfg = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, max_items=1, release_minutes=60)
         FakeScraper.pages[self.URL] = [listing(1, 450_000), listing(2, 800_000)]  # %55 şüpheli, %20 makul
         async with self.Session() as s:
             await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
@@ -189,10 +189,41 @@ class ReleaseTests(PipelineBase):
 
     async def test_stale_candidates_expire(self):
         self.lists()
-        cfg = CompareConfig(min_discount_pct=10.0, release_minutes=60)
+        cfg = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, max_items=1, release_minutes=60)
         FakeScraper.pages[self.URL] = [listing(1, 850_000), listing(2, 800_000)]
         async with self.Session() as s:
             await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
             self.assertEqual(len(self.sent), 1)
             queued = await release(s, cfg, "ADMIN", now=datetime.utcnow() + timedelta(hours=4))
         self.assertEqual(queued, 0)  # bekleyen aday 3 saati geçti, gönderilmez
+
+
+class ScheduleTests(PipelineBase):
+    def lists(self):
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 7)]
+
+    async def test_best_two_of_the_window_per_slot(self):
+        self.lists()
+        cfg = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, max_items=2, release_minutes=120)
+        FakeScraper.pages[self.URL] = [listing(1, 880_000), listing(2, 800_000), listing(3, 840_000), listing(4, 860_000)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
+        self.assertEqual(len(self.sent), 2)                         # 4 aday, en iyi 2'si
+        prices = " ".join(m["text"] for m in self.sent)
+        self.assertIn("800.000 TL", prices)
+        self.assertIn("840.000 TL", prices)
+        self.assertNotIn("880.000 TL", prices)
+
+    async def test_no_messages_outside_active_hours(self):
+        self.lists()
+        cfg = CompareConfig(active_start=8, active_end=23, min_discount_pct=10.0, max_items=1, release_minutes=0,
+                            fresh_hours=1000)
+        FakeScraper.pages[self.URL] = [listing(1, 800_000)]
+        night_tr = datetime(2026, 10, 23, 0, 30) - timedelta(hours=3)   # Türkiye saatiyle 00:30
+        day_tr = datetime(2026, 10, 23, 9, 0) - timedelta(hours=3)      # Türkiye saatiyle 09:00
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=CompareConfig(
+                active_start=0, active_end=24, min_discount_pct=10.0, max_items=0, release_minutes=0),
+                bench_cfg=BenchConfig())                               # aday havuza girer, hiçbiri gönderilmez
+            self.assertEqual(await release(s, cfg, "ADMIN", now=night_tr), 0)   # gece: gönderilmez
+            self.assertEqual(await release(s, cfg, "ADMIN", now=day_tr), 1)     # gündüz: gider

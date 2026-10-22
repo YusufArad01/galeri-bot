@@ -47,7 +47,8 @@ def describe_mode(dealers: list[dealer_mode.Dealer]) -> str:
         lines.append(f"• Galerici: {len(dealers)} galerici, {rules} kural")
     if "compare" in settings.modes:
         lines.append(f"• Karşılaştırma: benzerlerinden en az %{settings.COMPARE_MIN_DISCOUNT_PCT:g} ucuz adaylardan "
-                     f"{settings.COMPARE_RELEASE_MINUTES} dk'da bir en iyisi, günde en çok {settings.COMPARE_DAILY_MAX}")
+                     f"{settings.COMPARE_RELEASE_MINUTES} dk'da bir en iyi {settings.COMPARE_MAX_ITEMS}, günde en çok "
+                     f"{settings.COMPARE_DAILY_MAX} ({settings.COMPARE_ACTIVE_START}:00-{settings.COMPARE_ACTIVE_END}:00)")
     lines.append(f"• Döngü: {settings.SCRAPE_INTERVAL_MINUTES} dk, en çok {settings.MAX_LISTINGS_PER_CYCLE} yeni ilan")
     return "\n".join(lines)
 
@@ -84,6 +85,8 @@ async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], deale
                         release_minutes=settings.COMPARE_RELEASE_MINUTES,
                         fresh_hours=settings.COMPARE_FRESH_HOURS,
                         daily_max=settings.COMPARE_DAILY_MAX,
+                        active_start=settings.COMPARE_ACTIVE_START,
+                        active_end=settings.COMPARE_ACTIVE_END,
                     ),
                     bench_cfg=BenchConfig(
                         min_comparables=settings.COMPARE_MIN_COMPARABLES,
