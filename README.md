@@ -12,7 +12,8 @@ Railway'de `python main.py` ile çalışır; veri SQLite'tadır (`DB_PATH`).
 |---|---|
 | `market` (varsayılan) — **Sürüm 1** | İlanı okur, Perplexity'den aynı araç için piyasa ortalamasını çeker, fiyat ortalamanın **%15** (ayarlı) altındaysa `TELEGRAM_CHAT_ID`'ye bildirir. |
 | `dealer` — **Sürüm 2** | Galerici profillerine göre çalışır. Her galericinin uzman olduğu marka/model ve hedef fiyatı vardır; hedef fiyatın altındaki ilan o galericinin kendi sohbetine gider. İsteğe bağlı `market_check` ile piyasa ortalamasının %X altı da yakalanır. |
-| `both` | İkisi birlikte. |
+| `compare` — **Sürüm 3** | Perplexity kullanmaz. Her turda yeni ilanlar filtrelerden (hasar, yaş/fiyat) geçirilir; kalanlar arabam'daki **aynı donanım → motor → model** sayfalarındaki güncel ilanların (benzer yıl/km) fiyat ortasıyla kıyaslanır. Turun en avantajlı ilanı (`COMPARE_MAX_ITEMS`, varsayılan 1) benzerlerinden en az %10 ucuzsa gönderilir; değilse mesaj yok. Karşılaştırma sayfaları 6 saat önbelleğe alınır, turda en çok 8 yeni sayfa açılır. |
+| `both` / `all` | `both` = market+dealer, `all` = üçü birlikte. Virgülle de birleştirilir: `market,compare`. |
 
 İki sürümü ayrı Railway servisleri olarak çalıştırmak için aynı depoyu iki servise bağlayıp yalnızca
 `BOT_MODE` ve `DB_PATH` değerlerini farklı verin.
@@ -46,6 +47,10 @@ ayarla devam eder ve yöneticiye uyarı gönderir.
 | `MAX_DEGISEN` / `MAX_BOYALI` | `2` / `4` | İzin verilen en fazla değişen / boyalı parça. |
 | `SCRAPE_INTERVAL_MINUTES` | `30` | Döngü aralığı. |
 | `MAX_LISTINGS_PER_CYCLE` | `40` | Döngüde incelenecek en çok yeni ilan. |
+| `PAGES_PER_TARGET` | `2` | Liste sayfasının kaç sayfası taransın (sayfa başı ~20 ilan). |
+| `COMPARE_MIN_DISCOUNT_PCT` / `COMPARE_MAX_ITEMS` | `10` / `1` | Karşılaştırma modunda en az ucuzluk (%) ve turda gönderilecek en çok ilan. |
+| `COMPARE_MIN_COMPARABLES` / `COMPARE_YEAR_TOLERANCE` / `COMPARE_KM_TOLERANCE_PCT` | `5` / `1` / `40` | En az benzer ilan, yıl farkı, km farkı (%). |
+| `BENCH_TTL_HOURS` / `BENCH_MAX_FETCH_PER_CYCLE` | `6` / `8` | Karşılaştırma sayfası önbellek süresi ve turda açılacak en çok yeni sayfa. |
 | `CYCLE_TIMEOUT_MINUTES` | `40` | Takılan döngüyü iptal eder. |
 | `PROXY_URL` | – | Virgülle proxy listesi. Railway veri merkezi IP'leri engellenirse konut/mobil proxy burada. |
 | `PRICE_CACHE_DAYS` | `7` | Aynı araç için Perplexity sonucu önbellek süresi. |

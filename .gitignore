@@ -17,3 +17,5 @@ check_latest_logs.py
 # Galerici profili (müşteri chat ID'leri). Örnek: dealers.example.json
 dealers.json
 railway_auth.py
+railway_deploy_watch.state.json
+railway_deploy_watch.cmd

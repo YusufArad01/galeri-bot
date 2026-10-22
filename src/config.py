@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     PERPLEXITY_MODEL: str = "sonar"
     PRICE_CACHE_DAYS: int = 7
 
+    # --- Karşılaştırma modu: Perplexity'siz, arabam'daki benzer ilanlarla kıyaslar -------------------
+    COMPARE_MIN_DISCOUNT_PCT: float = 10.0   # benzerlerinin ortasından en az bu kadar ucuz
+    COMPARE_MAX_ITEMS: int = 1               # her turda gönderilecek en çok ilan (en avantajlılar)
+    COMPARE_MIN_COMPARABLES: int = 5         # karşılaştırma için en az benzer ilan
+    COMPARE_YEAR_TOLERANCE: int = 1
+    COMPARE_KM_TOLERANCE_PCT: float = 40.0
+    BENCH_TTL_HOURS: float = 6.0             # aynı sayfa bu süre yeniden açılmaz
+    BENCH_MAX_FETCH_PER_CYCLE: int = 8       # bir turda açılacak en çok karşılaştırma sayfası
+
     # --- Hasar filtresi (izin verilen en fazla) ---------------------------
     MAX_DEGISEN: int = 2
     MAX_BOYALI: int = 4
@@ -41,6 +50,7 @@ class Settings(BaseSettings):
     SCRAPE_INTERVAL_MINUTES: int = 30
     CYCLE_TIMEOUT_MINUTES: int = 40
     MAX_LISTINGS_PER_CYCLE: int = 40
+    PAGES_PER_TARGET: int = 2          # liste sayfasının kaç sayfası taransın (sayfa başı ~20 ilan)
     JITTER_MIN_SECONDS: float = 3.0
     JITTER_MAX_SECONDS: float = 7.0
     HEADLESS: bool = False
@@ -78,12 +88,21 @@ class Settings(BaseSettings):
 
     @property
     def modes(self) -> set[str]:
-        raw = self.BOT_MODE.strip().lower()
-        if raw == "both":
-            return {"market", "dealer"}
-        if raw in ("market", "dealer"):
-            return {raw}
-        raise ValueError(f"BOT_MODE must be market, dealer or both (got {self.BOT_MODE!r})")
+        """BOT_MODE: market, dealer, compare; virgülle birleştirilebilir. both=market+dealer, all=hepsi."""
+        found: set[str] = set()
+        for token in self.BOT_MODE.lower().replace("+", ",").split(","):
+            token = token.strip()
+            if token == "both":
+                found |= {"market", "dealer"}
+            elif token == "all":
+                found |= {"market", "dealer", "compare"}
+            elif token in ("market", "dealer", "compare"):
+                found.add(token)
+            elif token:
+                raise ValueError(f"BOT_MODE geçersiz: {token!r} (market, dealer, compare, both, all)")
+        if not found:
+            raise ValueError("BOT_MODE boş")
+        return found
 
     model_config = {
         "env_file": ".env",

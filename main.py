@@ -6,6 +6,8 @@ from src.config import settings
 from src.database import engine, Base, AsyncSessionLocal
 from src.health import CycleStats, Health
 from src.modes import dealer as dealer_mode
+from src.benchmark import BenchConfig
+from src.modes.compare import CompareConfig
 from src.notifications import Telegram
 from src.pipeline import build_targets, run_cycle
 from src.pricing.perplexity import PriceService
@@ -21,6 +23,10 @@ def engine_factory(kind: str, proxy_manager: ProxyManager):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all mevcut tabloya sütun eklemez: eski veritabanları için elle ekle
+        cols = [row[1] for row in (await conn.exec_driver_sql("PRAGMA table_info(listings)")).fetchall()]
+        if "is_disqualified" not in cols:
+            await conn.exec_driver_sql("ALTER TABLE listings ADD COLUMN is_disqualified BOOLEAN NOT NULL DEFAULT 0")
     logger.info("Database initialized.")
 
 
@@ -39,6 +45,8 @@ def describe_mode(dealers: list[dealer_mode.Dealer]) -> str:
     if "dealer" in settings.modes:
         rules = sum(len(d.rules) for d in dealers)
         lines.append(f"• Galerici: {len(dealers)} galerici, {rules} kural")
+    if "compare" in settings.modes:
+        lines.append(f"• Karşılaştırma: her turda benzerlerinden en az %{settings.COMPARE_MIN_DISCOUNT_PCT:g} ucuz en iyi {settings.COMPARE_MAX_ITEMS} ilan")
     lines.append(f"• Döngü: {settings.SCRAPE_INTERVAL_MINUTES} dk, en çok {settings.MAX_LISTINGS_PER_CYCLE} yeni ilan")
     return "\n".join(lines)
 
@@ -51,7 +59,7 @@ async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], deale
         if dealer_error:
             await health.notify_admin("dealer_cfg", f"⚠️ Galerici profil dosyası okunamadı, son geçerli ayarla devam ediliyor:\n{dealer_error}", cooldown_hours=12)
 
-        targets = build_targets(settings.target_urls, dealers, settings.modes)
+        targets = build_targets(settings.target_urls, dealers, settings.modes, settings.PAGES_PER_TARGET)
         if not targets:
             logger.error("TARGET_URL tanımlı değil (ve galerici kurallarında search_url yok).")
             await health.notify_admin("no_target", "⚠️ TARGET_URL tanımlı değil; taranacak sayfa yok.", cooldown_hours=12)
@@ -69,6 +77,17 @@ async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], deale
                     max_listings=settings.MAX_LISTINGS_PER_CYCLE,
                     jitter=(settings.JITTER_MIN_SECONDS, settings.JITTER_MAX_SECONDS),
                     stats=stats,
+                    compare=CompareConfig(
+                        min_discount_pct=settings.COMPARE_MIN_DISCOUNT_PCT,
+                        max_items=settings.COMPARE_MAX_ITEMS,
+                    ),
+                    bench_cfg=BenchConfig(
+                        min_comparables=settings.COMPARE_MIN_COMPARABLES,
+                        year_tolerance=settings.COMPARE_YEAR_TOLERANCE,
+                        km_tolerance_pct=settings.COMPARE_KM_TOLERANCE_PCT,
+                        ttl_hours=settings.BENCH_TTL_HOURS,
+                        max_fetch_per_cycle=settings.BENCH_MAX_FETCH_PER_CYCLE,
+                    ),
                 ),
                 timeout=settings.CYCLE_TIMEOUT_MINUTES * 60,
             )

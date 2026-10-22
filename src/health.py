@@ -44,7 +44,10 @@ class CycleStats:
     price_cache_hits: int = 0
     price_error_kind: str | None = None
     deferred: int = 0  # fiyat servisi hatası yüzünden sonraya bırakılan ilanlar
+    bench_pages: int = 0   # bu döngüde açılan karşılaştırma sayfası
+    bench_empty: int = 0   # boş gelen karşılaştırma sayfası
     blocked: bool = False
+    block_note: str = ""  # engelde siteden gelen sayfanın başlığı/metni (teşhis için)
     timed_out: bool = False
 
 
@@ -149,7 +152,8 @@ class Health:
                     "blocked",
                     f"🚧 Son {streak} döngüdür siteden ilan alınamıyor (engel/captcha ya da sayfa yapısı değişmiş olabilir).\n"
                     "Çözüm: PROXY_URL ile konut/mobil proxy ekleyin veya sayfa seçicilerini kontrol edin. "
-                    "Bu sürede fırsat mesajı gelmemesi normaldir.",
+                    "Bu sürede fırsat mesajı gelmemesi normaldir."
+                    + (f"\nSayfadan gelen ipucu: {stats.block_note}" if stats.block_note else ""),
                     cooldown_hours=6,
                 )
         elif streak:

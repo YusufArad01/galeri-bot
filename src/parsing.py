@@ -223,7 +223,7 @@ def parse_listing_fields(props: dict[str, str], title: str, breadcrumbs: list[st
 
 def build_listing(url: str, title: str, price_text: str, description: str,
                   props: dict[str, str], breadcrumbs: list[str] | None = None,
-                  max_degisen: int = 2, max_boyali: int = 4) -> dict:
+                  max_degisen: int = 2, max_boyali: int = 4, crumbs: list[str] | None = None) -> dict:
     """Ham DOM verisinden pipeline'ın beklediği ilan sözlüğünü üretir."""
     price = parse_tl(price_text)
     fields = parse_listing_fields(props, title, breadcrumbs)
@@ -242,4 +242,44 @@ def build_listing(url: str, title: str, price_text: str, description: str,
         "damage_reasons": dmg.reasons,
         "is_old_cheap": old_cheap,
         "is_disqualified": dmg.heavy or old_cheap,
+        "bench_urls": bench_urls_from_crumbs(crumbs or []),
     }
+
+
+# --------------------------------------------------------------------------- #
+# Karşılaştırma sayfaları ve liste satırları
+# --------------------------------------------------------------------------- #
+_CRUMB_RE = re.compile(r"^/ikinci-el/otomobil/[a-z0-9-]+$")
+
+
+def bench_urls_from_crumbs(crumbs: list[str]) -> list[str]:
+    """Detay sayfasındaki yol çubuğu [marka, seri, motor, donanım] -> en özelinden genele
+    karşılaştırma sayfaları (marka düzeyi çok geniş olduğu için atlanır)."""
+    clean = [c.split("?")[0] for c in crumbs if _CRUMB_RE.match(c.split("?")[0])]
+    clean = list(dict.fromkeys(clean))[:4]
+    levels = clean[1:]
+    return ["https://www.arabam.com" + c for c in reversed(levels)]
+
+
+_DATE_RE = re.compile(r"^\d{1,2}\s+\w+\s+\d{4}$")
+
+
+def parse_list_row(href: str, lines: list[str]) -> dict | None:
+    """Liste sayfası satırı: [ad, başlık, yıl, km, renk, fiyat, tarih, il, ilçe]."""
+    year = km = 0
+    price = 0.0
+    city = ""
+    name = lines[0] if lines else ""
+    for i, line in enumerate(lines):
+        if re.fullmatch(r"(19|20)\d{2}", line):
+            year = int(line)
+        elif re.fullmatch(r"[\d.]+\s*KM", line, re.IGNORECASE):
+            km = parse_int(line)
+        elif re.fullmatch(r"[\d.]+\s*TL", line):
+            price = parse_tl(line)
+        elif _DATE_RE.match(line) and i + 1 < len(lines):
+            city = lines[i + 1]
+    if not (price and year):
+        return None
+    return {"id": source_id_from_url(href), "url": href, "name": name,
+            "title": lines[1] if len(lines) > 1 else "", "year": year, "km": km, "price": price, "city": city}

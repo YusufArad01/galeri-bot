@@ -27,6 +27,8 @@ def car(i, price, **kw):
 
 class FakeScraper:
     pages: dict[str, list[dict]] = {}
+    lists: dict[str, list[dict]] = {}   # karşılaştırma sayfaları: url -> satırlar
+    list_fetches: list[str] = []
     blocked = False
 
     def __init__(self, proxy_manager):
@@ -46,6 +48,10 @@ class FakeScraper:
 
     def source_id(self, url):
         return url.rsplit("/", 1)[-1]
+
+    async def fetch_list_rows(self, url):
+        FakeScraper.list_fetches.append(url)
+        return [dict(r) for r in FakeScraper.lists.get(url, [])]
 
     async def fetch_listing_data(self, url):
         for cars in FakeScraper.pages.values():
@@ -72,6 +78,8 @@ class PipelineBase(unittest.IsolatedAsyncioTestCase):
         self.pplx_avg = 1_000_000
         self.pplx_calls = 0
         FakeScraper.pages = {}
+        FakeScraper.lists = {}
+        FakeScraper.list_fetches = []
         FakeScraper.blocked = False
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -97,12 +105,12 @@ class PipelineBase(unittest.IsolatedAsyncioTestCase):
         except OSError:  # Windows: aiosqlite iş parçacığı dosyayı biraz geç bırakabilir
             pass
 
-    async def cycle(self, session, *, modes=("market",), dealers=(), key="k", stats=None):
+    async def cycle(self, session, *, modes=("market",), dealers=(), key="k", stats=None, compare=None, bench_cfg=None):
         prices = PriceService(session, key, client=self.client, retry_sleep=0)
         return await run_cycle(
             session=session, engine_factory=lambda kind, pm: FakeScraper(pm), telegram=self.telegram,
             prices=prices, dealers=list(dealers), targets=[self.URL], modes=set(modes), market_chat_id="ADMIN",
-            threshold_pct=15.0, suspicious_pct=45.0, max_listings=40, jitter=(0, 0), stats=stats)
+            threshold_pct=15.0, suspicious_pct=45.0, max_listings=40, jitter=(0, 0), stats=stats, compare=compare, bench_cfg=bench_cfg)
 
     async def count(self, session, model):
         return (await session.execute(select(func.count()).select_from(model))).scalar_one()

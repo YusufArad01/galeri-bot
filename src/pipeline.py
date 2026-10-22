@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.health import CycleStats
 from src.models.domain import Listing
 from src.modes import dealer as dealer_mode
+from src.modes import compare as compare_mode
+from src.benchmark import BenchConfig, Benchmark
 from src.modes import market as market_mode
 from src.notifications import Telegram, enqueue_alert, flush_alerts
 from src.pricing.perplexity import PriceService, PriceServiceError
@@ -29,11 +31,17 @@ def normalize_target(url: str) -> str:
     return url + ("&" if "?" in url else "?") + "sort=DateDesc"
 
 
-def build_targets(target_urls: list[str], dealers: list[dealer_mode.Dealer], modes: set[str]) -> list[str]:
+def build_targets(target_urls: list[str], dealers: list[dealer_mode.Dealer], modes: set[str],
+                  pages: int = 1) -> list[str]:
     urls = list(target_urls)
     if "dealer" in modes:
         urls += dealer_mode.search_urls(dealers)
-    return list(dict.fromkeys(normalize_target(u) for u in urls))
+    out: list[str] = []
+    for url in dict.fromkeys(normalize_target(u) for u in urls):
+        out.append(url)
+        if "vava.cars" not in url and "page=" not in url:
+            out += [f"{url}&page={n}" for n in range(2, pages + 1)]
+    return list(dict.fromkeys(out))
 
 
 def listing_row(data: dict) -> dict:
@@ -57,7 +65,9 @@ async def known_ids(session: AsyncSession, ids: list[str]) -> set[str]:
 
 async def process_listing(data: dict, *, session: AsyncSession, prices: PriceService,
                           stats: CycleStats, modes: set[str], dealers: list[dealer_mode.Dealer],
-                          market_chat_id: str, threshold_pct: float, suspicious_pct: float) -> None:
+                          market_chat_id: str, threshold_pct: float, suspicious_pct: float,
+                          bench: Benchmark | None = None,
+                          compare_out: list[compare_mode.Entry] | None = None) -> None:
     """İlanı değerlendirir, kaydeder, bildirimleri outbox'a yazar.
 
     Fiyat servisi hatasında ilan KAYDEDİLMEZ ve PriceServiceError yükseltilir; sonraki döngüde
@@ -85,6 +95,15 @@ async def process_listing(data: dict, *, session: AsyncSession, prices: PriceSer
         candidates += dealer_cands
         deferred = deferred or dealer_err
 
+    if "compare" in modes and bench is not None and compare_out is not None and not data.get("is_disqualified"):
+        stats.evaluated += 1
+        try:
+            entry = await compare_mode.evaluate(data, bench)
+            if entry:
+                compare_out.append(entry)
+        except PriceServiceError as exc:  # BenchBudget de buradan geçer
+            deferred = deferred or exc
+
     if deferred is None:
         session.add(Listing(**listing_row(data)))
     for c in candidates:
@@ -103,7 +122,9 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                     targets: list[str], modes: set[str], market_chat_id: str,
                     threshold_pct: float, suspicious_pct: float, max_listings: int,
                     jitter: tuple[float, float] = (3.0, 7.0),
-                    stats: CycleStats | None = None) -> CycleStats:
+                    stats: CycleStats | None = None,
+                    compare: compare_mode.CompareConfig | None = None,
+                    bench_cfg: BenchConfig | None = None) -> CycleStats:
     # stats dışarıdan verilirse zaman aşımında bile o ana kadarki sayaçlar kaybolmaz
     if stats is None:
         stats = CycleStats()
@@ -120,6 +141,8 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
 
     first_fetch = True
     budget = max_listings
+    compare_entries: list[compare_mode.Entry] = []
+    compare_on = "compare" in modes and compare is not None
     for kind, urls in groups.items():
         proxy_manager = ProxyManager(session)
         async with engine_factory(kind, proxy_manager) as scraper:
@@ -130,9 +153,12 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                 logger.info(f"Found {len(got)} listings on {url}")
                 stats.links_found += len(got)
                 stats.blocked = stats.blocked or getattr(scraper, "last_blocked", False)
+                if not got:
+                    stats.block_note = getattr(scraper, "last_block_note", "") or stats.block_note
                 links.extend(got)
             links = list(dict.fromkeys(links))
 
+            bench = Benchmark(session, scraper, bench_cfg or BenchConfig())                 if compare_on and hasattr(scraper, "fetch_list_rows") else None
             ids = {link: scraper.source_id(link) for link in links}
             known = await known_ids(session, list(ids.values()))
             new_links = [link for link in links if ids[link] not in known]
@@ -155,7 +181,8 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                 try:
                     await process_listing(
                         data, session=session, prices=prices, stats=stats, modes=modes, dealers=dealers,
-                        market_chat_id=market_chat_id, threshold_pct=threshold_pct, suspicious_pct=suspicious_pct)
+                        market_chat_id=market_chat_id, threshold_pct=threshold_pct, suspicious_pct=suspicious_pct,
+                        bench=bench, compare_out=compare_entries)
                 except PriceServiceError as exc:
                     await session.rollback()
                     stats.deferred += 1
@@ -176,6 +203,20 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                 sent, _ = await flush_alerts(session, telegram)
                 stats.alerts_sent += sent
             budget = max(0, budget - len(new_links[:budget]))
+            if bench is not None:
+                stats.bench_pages += bench.fetched
+                stats.bench_empty += bench.empty_pages
+
+    if compare_on and compare_entries:
+        for entry in compare_mode.pick_best(compare_entries, compare):
+            alert = await enqueue_alert(
+                session, source_listing_id=entry.data["source_listing_id"], mode="compare", dealer_id="",
+                chat_id=market_chat_id, text=compare_mode.format_entry(entry, len(compare_entries)),
+                reason=f"benzerlerinden -%{entry.discount_pct:.1f}")
+            if alert is not None:
+                stats.alerts_queued += 1
+                logger.info(f"Karşılaştırma bildirimi kuyruğa alındı: -%{entry.discount_pct:.1f} -> {entry.data['url']}")
+        await session.commit()
 
     sent, _ = await flush_alerts(session, telegram)
     stats.alerts_sent += sent

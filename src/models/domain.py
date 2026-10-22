@@ -25,6 +25,8 @@ class Listing(Base):
     city = Column(String, nullable=False)
     description = Column(Text, nullable=False)
     url = Column(String, nullable=False)
+    # Hasarlı/elenmiş ilanlar karşılaştırma havuzunu bozmasın diye işaretlenir
+    is_disqualified = Column(Boolean, nullable=False, default=False, server_default="0")
     scraped_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (Index('ix_listing_bmy', 'brand', 'model', 'year'),)
@@ -86,3 +88,12 @@ class BotState(Base):
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=False, default="")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BenchCache(Base):
+    """Arabam liste sayfalarından okunan 'benzer ilanlar' (karşılaştırma verisi) önbelleği."""
+    __tablename__ = "bench_cache"
+    id = Column(Integer, primary_key=True, index=True)
+    cache_key = Column(String, unique=True, nullable=False, index=True)  # sayfa adresi
+    payload = Column(Text, nullable=False)                               # JSON satır listesi
+    fetched_at = Column(DateTime, default=datetime.utcnow)

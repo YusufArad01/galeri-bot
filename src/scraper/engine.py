@@ -8,7 +8,7 @@ from loguru import logger
 from playwright.async_api import async_playwright, Page, Route
 
 from src.config import settings
-from src.parsing import build_listing, source_id_from_url
+from src.parsing import build_listing, parse_list_row, source_id_from_url
 from src.proxy.manager import ProxyManager
 
 try:  # requirements.txt playwright-stealth==1.0.6 sabitler; 2.x API'si farklı
@@ -52,7 +52,9 @@ LISTING_JS = r'''() => {
     });
 
     const breadcrumbs = Array.from(document.querySelectorAll('.breadcrumb li a, .bc-item a')).map(i => text(i));
-    return { title, priceText, description, props, breadcrumbs };
+    // marka > seri > motor > donanım sayfalarına giden göreli bağlantılar (aynı modelin güncel ilanları orada)
+    const crumbs = Array.from(document.querySelectorAll('a[href^="/ikinci-el/otomobil/"]')).map(a => a.getAttribute('href'));
+    return { title, priceText, description, props, breadcrumbs, crumbs };
 }'''
 
 LINKS_JS = r'''() => {
@@ -60,6 +62,15 @@ LINKS_JS = r'''() => {
     if (!found.length) found = Array.from(document.querySelectorAll('td.pr8 a')).map(a => a.href);
     if (!found.length) found = Array.from(document.querySelectorAll('a')).map(a => a.href);
     return found.filter(h => h.includes('/ilan/'));
+}'''
+
+
+ROWS_JS = r'''() => {
+    return Array.from(document.querySelectorAll('tr.listing-list-item')).map(tr => {
+        const a = tr.querySelector('a[href*="/ilan/"]');
+        const lines = (tr.innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
+        return a ? { href: a.href.split('#')[0], lines } : null;
+    }).filter(Boolean);
 }'''
 
 
@@ -77,6 +88,7 @@ class ScraperEngine:
     def __init__(self, proxy_manager: ProxyManager):
         self.proxy_manager = proxy_manager
         self.last_blocked = False
+        self.last_block_note = ""
         self._pw = None
         self._browser = None
         os.makedirs("logs", exist_ok=True)
@@ -110,7 +122,12 @@ class ScraperEngine:
         if not self._browser or not self._browser.is_connected():
             logger.warning("Tarayıcı bağlantısı kopmuş, yeniden başlatılıyor.")
             await self._launch()
-        ctx_kwargs: dict[str, Any] = {"user_agent": USER_AGENT, "viewport": {"width": 1280, "height": 720}}
+        # Türkiye'deki bir kullanıcı gibi görün: sunucu varsayılanı (UTC, en-US) bot izi bırakır
+        ctx_kwargs: dict[str, Any] = {
+            "user_agent": USER_AGENT, "viewport": {"width": 1280, "height": 720},
+            "locale": "tr-TR", "timezone_id": "Europe/Istanbul",
+            "extra_http_headers": {"Accept-Language": "tr-TR,tr;q=0.9,en;q=0.5"},
+        }
         if proxy_url and self._per_context_proxy:
             ctx_kwargs["proxy"] = {"server": proxy_url}
         context = await self._browser.new_context(**ctx_kwargs)
@@ -147,6 +164,11 @@ class ScraperEngine:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         screenshot_path = f"logs/debug_error_{reason}_{timestamp}.png"
         html_path = f"logs/debug_page_{reason}_{timestamp}.html"
+        try:
+            body = await page.evaluate("document.body ? document.body.innerText : ''")
+            self.last_block_note = f"başlık={(await page.title())[:80]!r}; metin={' '.join(body.split())[:140]!r}"
+        except Exception:
+            pass
         try:
             await page.screenshot(path=screenshot_path)
             with open(html_path, "w", encoding="utf-8") as f:
@@ -216,6 +238,7 @@ class ScraperEngine:
                     url=url, title=raw["title"], price_text=raw["priceText"],
                     description=raw["description"], props=raw["props"], breadcrumbs=raw["breadcrumbs"],
                     max_degisen=settings.MAX_DEGISEN, max_boyali=settings.MAX_BOYALI,
+                    crumbs=raw.get("crumbs") or [],
                 )
                 if proxy:
                     await self.proxy_manager.mark_success(proxy.id)
@@ -230,3 +253,23 @@ class ScraperEngine:
                 await asyncio.sleep((2 ** attempt) + random.uniform(1.5, 4.0))
             finally:
                 await context.close()
+
+    async def fetch_list_rows(self, list_url: str) -> list[dict]:
+        """Liste sayfasındaki ilan satırları (fiyat/yıl/km/il). Karşılaştırma verisi için tek istek yeter.
+        Başarısızlıkta boş liste döner (engel/yapı değişikliği karşılaştırmayı durdurur, botu değil)."""
+        proxy = await self.proxy_manager.get_proxy()
+        context, page = await self._new_page(proxy.url if proxy else None)
+        try:
+            await self._open(page, list_url)
+            raw = await page.evaluate(ROWS_JS)
+            rows = [r for r in (parse_list_row(x["href"], x["lines"]) for x in raw) if r]
+            if proxy:
+                await self.proxy_manager.mark_success(proxy.id)
+            return rows
+        except Exception as e:
+            logger.warning(f"Liste satırları okunamadı {list_url}: {e}")
+            if proxy:
+                await self.proxy_manager.mark_failure(proxy.id)
+            return []
+        finally:
+            await context.close()
