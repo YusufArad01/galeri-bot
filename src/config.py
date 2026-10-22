@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     JITTER_MIN_SECONDS: float = 3.0
     JITTER_MAX_SECONDS: float = 7.0
     HEADLESS: bool = False
+    # "chrome" = gerçek Google Chrome (Cloudflare'i geçmek için paketli Chromium'dan daha iyi). Boş = paketli Chromium.
+    BROWSER_CHANNEL: str = ""
     # Virgülle ayrılmış proxy listesi (http://kullanici:sifre@host:port). Boşsa doğrudan bağlanır.
     PROXY_URL: str = ""
 

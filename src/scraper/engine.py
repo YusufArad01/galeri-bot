@@ -25,12 +25,18 @@ except ImportError:  # pragma: no cover
 # UA, işletim sistemiyle tutarlı olmalı: Linux sunucuda "Windows Chrome" demek bot izi bırakır.
 _IS_LINUX = sys.platform.startswith("linux")
 _OS_UA = "X11; Linux x86_64" if _IS_LINUX else "Windows NT 10.0; Win64; x64"
-USER_AGENT = f"Mozilla/5.0 ({_OS_UA}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-CLIENT_HINTS = {
-    "sec-ch-ua": '"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Linux"' if _IS_LINUX else '"Windows"',
-}
+
+
+def identity(browser_version: str) -> tuple[str, dict[str, str]]:
+    """Gerçek tarayıcı sürümüyle uyumlu kimlik: "HeadlessChrome" ifadesi ve sürüm uyuşmazlığı bot izidir."""
+    major = (browser_version or "123").split(".")[0]
+    ua = f"Mozilla/5.0 ({_OS_UA}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+    hints = {
+        "sec-ch-ua": f'"Google Chrome";v="{major}", "Not:A-Brand";v="8", "Chromium";v="{major}"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Linux"' if _IS_LINUX else '"Windows"',
+    }
+    return ua, hints
 CHALLENGE_TITLES = ("bir dakika lütfen", "just a moment", "checking your browser")
 CHALLENGE_WAIT_S = 30
 STATE_PATH = Path(settings.DB_PATH).resolve().parent / "browser_state.json"  # Cloudflare çerezi kalıcı
@@ -103,6 +109,8 @@ class ScraperEngine:
         self.last_block_note = ""
         self.last_status = 0
         self._shared = None  # proxy'siz sayfaların ortak context'i
+        self._real_chrome = False
+        self._headless_new = True
         self._pw = None
         self._browser = None
         os.makedirs("logs", exist_ok=True)
@@ -124,18 +132,33 @@ class ScraperEngine:
 
     async def _launch(self):
         self._per_context_proxy = await self.proxy_manager.has_active()
-        kwargs: dict[str, Any] = {
-            "headless": settings.HEADLESS,
-            "ignore_default_args": ["--enable-automation"],
-            "args": ["--disable-blink-features=AutomationControlled"],
-        }
-        if settings.HEADLESS:
-            # Eski headless kolayca tanınır; "new" gerçek Chrome gibi davranır (ekran gerekmez)
-            kwargs["headless"] = False
-            kwargs["args"].append("--headless=new")
-        if self._per_context_proxy:
-            kwargs["proxy"] = {"server": "per-context"}
-        self._browser = await self._pw.chromium.launch(**kwargs)
+        def build(channel: str) -> dict[str, Any]:
+            kw: dict[str, Any] = {
+                "headless": False,
+                "ignore_default_args": ["--enable-automation"],
+                "args": ["--disable-blink-features=AutomationControlled"],
+            }
+            if channel:
+                kw["channel"] = channel
+            # Eski headless kolayca tanınır; "new" gerçek Chrome gibi davranır (ekran gerekmez).
+            # HEADLESS=false ise gerçek pencere açılır; Linux'ta ekran (xvfb) yoksa çökmesin diye "new"e düşer.
+            if settings.HEADLESS or (_IS_LINUX and not os.environ.get("DISPLAY")):
+                kw["args"].append("--headless=new")
+            if self._per_context_proxy:
+                kw["proxy"] = {"server": "per-context"}
+            return kw
+
+        self._real_chrome = False
+        self._headless_new = settings.HEADLESS or (_IS_LINUX and not os.environ.get("DISPLAY"))
+        if settings.BROWSER_CHANNEL:
+            try:
+                self._browser = await self._pw.chromium.launch(**build(settings.BROWSER_CHANNEL))
+                self._real_chrome = True
+                logger.info(f"Tarayıcı: gerçek {settings.BROWSER_CHANNEL} (headless={settings.HEADLESS})")
+                return
+            except Exception as e:
+                logger.warning(f"{settings.BROWSER_CHANNEL} açılamadı, paketli Chromium'a dönülüyor: {str(e)[:160]}")
+        self._browser = await self._pw.chromium.launch(**build(""))
 
     async def _new_page(self, proxy_url: str | None) -> tuple[Any, Page]:
         """(kapatılacak nesne, sayfa). Proxy yoksa tek ortak context kullanılır: Cloudflare
@@ -146,10 +169,15 @@ class ScraperEngine:
             await self._launch()
         # Türkiye'deki bir kullanıcı gibi görün: sunucu varsayılanı (UTC, en-US) bot izi bırakır
         ctx_kwargs: dict[str, Any] = {
-            "user_agent": USER_AGENT, "viewport": {"width": 1280, "height": 720},
+            "viewport": {"width": 1280, "height": 720},
             "locale": "tr-TR", "timezone_id": "Europe/Istanbul",
-            "extra_http_headers": {"Accept-Language": "tr-TR,tr;q=0.9,en;q=0.5", **CLIENT_HINTS},
+            "extra_http_headers": {"Accept-Language": "tr-TR,tr;q=0.9,en;q=0.5"},
         }
+        # Ekranlı gerçek Chrome kendini doğru tanıtır; ekransız/paketli olanlar "Headless" der, düzelt
+        if self._headless_new or not self._real_chrome:
+            ua, hints = identity(self._browser.version)
+            ctx_kwargs["user_agent"] = ua
+            ctx_kwargs["extra_http_headers"].update(hints)
         use_proxy = bool(proxy_url and self._per_context_proxy)
         if use_proxy:
             ctx_kwargs["proxy"] = {"server": proxy_url}
