@@ -1,6 +1,8 @@
 import os
+import sys
 import asyncio
 import random
+from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict
 
@@ -20,8 +22,18 @@ except ImportError:  # pragma: no cover
     except ImportError:
         Stealth = None
 
-USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+# UA, işletim sistemiyle tutarlı olmalı: Linux sunucuda "Windows Chrome" demek bot izi bırakır.
+_IS_LINUX = sys.platform.startswith("linux")
+_OS_UA = "X11; Linux x86_64" if _IS_LINUX else "Windows NT 10.0; Win64; x64"
+USER_AGENT = f"Mozilla/5.0 ({_OS_UA}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+CLIENT_HINTS = {
+    "sec-ch-ua": '"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Linux"' if _IS_LINUX else '"Windows"',
+}
+CHALLENGE_TITLES = ("bir dakika lütfen", "just a moment", "checking your browser")
+CHALLENGE_WAIT_S = 30
+STATE_PATH = Path(settings.DB_PATH).resolve().parent / "browser_state.json"  # Cloudflare çerezi kalıcı
 
 LISTING_JS = r'''() => {
     const text = (el) => (el && el.innerText ? el.innerText.trim() : "");
@@ -90,6 +102,7 @@ class ScraperEngine:
         self.last_blocked = False
         self.last_block_note = ""
         self.last_status = 0
+        self._shared = None  # proxy'siz sayfaların ortak context'i
         self._pw = None
         self._browser = None
         os.makedirs("logs", exist_ok=True)
@@ -103,6 +116,7 @@ class ScraperEngine:
     async def __aexit__(self, *exc):
         try:
             if self._browser:
+                await self._save_state()
                 await self._browser.close()
         finally:
             if self._pw:
@@ -115,34 +129,81 @@ class ScraperEngine:
             "ignore_default_args": ["--enable-automation"],
             "args": ["--disable-blink-features=AutomationControlled"],
         }
+        if settings.HEADLESS:
+            # Eski headless kolayca tanınır; "new" gerçek Chrome gibi davranır (ekran gerekmez)
+            kwargs["headless"] = False
+            kwargs["args"].append("--headless=new")
         if self._per_context_proxy:
             kwargs["proxy"] = {"server": "per-context"}
         self._browser = await self._pw.chromium.launch(**kwargs)
 
     async def _new_page(self, proxy_url: str | None) -> tuple[Any, Page]:
+        """(kapatılacak nesne, sayfa). Proxy yoksa tek ortak context kullanılır: Cloudflare
+        doğrulamasını bir kez geçince çerez diğer sayfalarda ve sonraki turlarda da geçerli kalır."""
         if not self._browser or not self._browser.is_connected():
             logger.warning("Tarayıcı bağlantısı kopmuş, yeniden başlatılıyor.")
+            self._shared = None
             await self._launch()
         # Türkiye'deki bir kullanıcı gibi görün: sunucu varsayılanı (UTC, en-US) bot izi bırakır
         ctx_kwargs: dict[str, Any] = {
             "user_agent": USER_AGENT, "viewport": {"width": 1280, "height": 720},
             "locale": "tr-TR", "timezone_id": "Europe/Istanbul",
-            "extra_http_headers": {"Accept-Language": "tr-TR,tr;q=0.9,en;q=0.5"},
+            "extra_http_headers": {"Accept-Language": "tr-TR,tr;q=0.9,en;q=0.5", **CLIENT_HINTS},
         }
-        if proxy_url and self._per_context_proxy:
+        use_proxy = bool(proxy_url and self._per_context_proxy)
+        if use_proxy:
             ctx_kwargs["proxy"] = {"server": proxy_url}
-        context = await self._browser.new_context(**ctx_kwargs)
+            context = await self._browser.new_context(**ctx_kwargs)
+        else:
+            if self._shared is None:
+                if STATE_PATH.exists():
+                    ctx_kwargs["storage_state"] = str(STATE_PATH)
+                self._shared = await self._browser.new_context(**ctx_kwargs)
+            context = self._shared
         page = await context.new_page()
+        closer = context if use_proxy else page
         if _stealth_async:
             await _stealth_async(page)
         elif Stealth:
             await Stealth().apply_stealth_async(page)
         await page.route("**/*", self._intercept_route)
-        return context, page
+        return closer, page
 
     # -- yardımcılar ------------------------------------------------------------
+    async def _save_state(self):
+        if self._shared is not None:
+            try:
+                await self._shared.storage_state(path=str(STATE_PATH))
+            except Exception as e:
+                logger.warning(f"Tarayıcı durumu kaydedilemedi: {e}")
+
+    async def _on_challenge(self, page: Page) -> bool:
+        try:
+            title = ((await page.title()) or "").lower()
+            if any(t in title for t in CHALLENGE_TITLES):
+                return True
+            return await page.locator("text=Güvenlik doğrulaması").count() > 0
+        except Exception:  # sayfa yönlenirken bağlam yok olabilir: doğrulama bitiyor demektir
+            return False
+
+    async def _wait_challenge(self, page: Page) -> bool:
+        """Cloudflare "Bir dakika lütfen" sayfası kendiliğinden geçebilir; beklemeden 'ilan yok' deme."""
+        if not await self._on_challenge(page):
+            return True
+        logger.info("Cloudflare doğrulaması göründü, bekleniyor...")
+        for _ in range(CHALLENGE_WAIT_S):
+            await asyncio.sleep(1)
+            if not await self._on_challenge(page):
+                logger.info("Cloudflare doğrulaması geçildi.")
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
+                return True
+        return False
+
     async def _intercept_route(self, route: Route):
-        if route.request.resource_type in ("image", "font", "media", "stylesheet"):
+        if route.request.resource_type in ("image", "media"):
             await route.abort()
         else:
             await route.continue_()
@@ -183,6 +244,8 @@ class ScraperEngine:
     async def _open(self, page: Page, url: str):
         resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
         self.last_status = resp.status if resp else 0
+        if not await self._wait_challenge(page):
+            raise BlockedError("Cloudflare doğrulaması geçilemedi")
         await self._human_interaction(page)
         if await self._is_blocked(page):
             raise BlockedError(f"Captcha/giriş sayfası: {await page.title()}")
@@ -208,6 +271,7 @@ class ScraperEngine:
                     raise ValueError("No links found on category page.")
                 if proxy:
                     await self.proxy_manager.mark_success(proxy.id)
+                await self._save_state()
                 return links
             except Exception as e:
                 if isinstance(e, BlockedError):
