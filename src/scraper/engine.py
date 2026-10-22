@@ -89,6 +89,7 @@ class ScraperEngine:
         self.proxy_manager = proxy_manager
         self.last_blocked = False
         self.last_block_note = ""
+        self.last_status = 0
         self._pw = None
         self._browser = None
         os.makedirs("logs", exist_ok=True)
@@ -166,7 +167,9 @@ class ScraperEngine:
         html_path = f"logs/debug_page_{reason}_{timestamp}.html"
         try:
             body = await page.evaluate("document.body ? document.body.innerText : ''")
-            self.last_block_note = f"başlık={(await page.title())[:80]!r}; metin={' '.join(body.split())[:140]!r}"
+            self.last_block_note = (f"http={self.last_status}; başlık={(await page.title())[:80]!r}; "
+                                    f"metin={' '.join(body.split())[:140]!r}")
+            logger.warning(f"Sayfa ipucu ({reason}): {self.last_block_note}")
         except Exception:
             pass
         try:
@@ -178,7 +181,8 @@ class ScraperEngine:
             logger.error(f"Failed to capture diagnostics: {e}")
 
     async def _open(self, page: Page, url: str):
-        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        self.last_status = resp.status if resp else 0
         await self._human_interaction(page)
         if await self._is_blocked(page):
             raise BlockedError(f"Captcha/giriş sayfası: {await page.title()}")
