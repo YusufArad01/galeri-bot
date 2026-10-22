@@ -97,3 +97,15 @@ class BenchCache(Base):
     cache_key = Column(String, unique=True, nullable=False, index=True)  # sayfa adresi
     payload = Column(Text, nullable=False)                               # JSON satır listesi
     fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CompareCandidate(Base):
+    """Karşılaştırma modunun aday havuzu: eşiği geçen ilanlar, düzenli aralıkla en iyisi gönderilir."""
+    __tablename__ = "compare_candidates"
+    id = Column(Integer, primary_key=True, index=True)
+    source_listing_id = Column(String, unique=True, nullable=False, index=True)
+    score = Column(Float, nullable=False)
+    payload = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="NEW")  # NEW, RELEASED, EXPIRED
+    created_at = Column(DateTime, default=datetime.utcnow)
+    released_at = Column(DateTime, nullable=True)

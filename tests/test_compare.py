@@ -1,10 +1,13 @@
+from datetime import datetime, timedelta
+
 from sqlalchemy import select
 
 from src.benchmark import BenchConfig
 from src.config import Settings
 from src.health import CycleStats, Health
 from src.models.domain import Listing
-from src.modes.compare import CompareConfig
+from src.modes.compare import CompareConfig, release
+from src.notifications import flush_alerts
 from src.parsing import bench_urls_from_crumbs, parse_list_row
 from tests.test_pipeline import FakeScraper, PipelineBase, car
 
@@ -49,7 +52,7 @@ class ParseTests(PipelineBase):
 
 
 class CompareModeTests(PipelineBase):
-    CFG = CompareConfig(min_discount_pct=10.0, max_items=1)
+    CFG = CompareConfig(min_discount_pct=10.0, max_items=1, release_minutes=0)
 
     def lists(self):
         # donanım sayfasında yeterli ilan yok (3), motor sayfasında 6 benzer ilan var
@@ -72,7 +75,7 @@ class CompareModeTests(PipelineBase):
             text = self.sent[0]["text"]
             self.assertIn("800.000 TL", text)
             self.assertIn("Aynı motordaki 6 güncel ilanın", text)      # donanım yetmedi, motor düzeyine düştü
-            self.assertIn("(Bu turda 3 ilan karşılaştırıldı)", text)
+            self.assertIn("(Son 3 saatte 2 aday arasından en iyisi)", text)
             self.assertNotIn("300.000", text)
             self.assertEqual(st.bench_pages, 2)                        # donanım + motor; seri sayfası açılmadı
             self.assertEqual(len((await s.execute(select(Listing))).scalars().all()), 4)
@@ -142,3 +145,54 @@ class TargetTests(PipelineBase):
             "https://www.arabam.com/ikinci-el/otomobil?sort=DateDesc&page=3",
             "https://tr.vava.cars/buy/cars"])
         self.assertEqual(len(build_targets(["https://www.arabam.com/x"], [], {"market"})), 1)
+
+
+class ReleaseTests(PipelineBase):
+    def lists(self):
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 7)]
+
+    async def test_spacing_keeps_candidates_until_next_slot(self):
+        self.lists()
+        cfg = CompareConfig(min_discount_pct=10.0, release_minutes=60)
+        FakeScraper.pages[self.URL] = [listing(1, 850_000)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
+            self.assertEqual(len(self.sent), 1)                   # ilk gönderim hemen
+
+            FakeScraper.pages[self.URL] = [listing(2, 800_000), listing(3, 820_000)]
+            await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
+            self.assertEqual(len(self.sent), 1)                   # 60 dk dolmadı: aday bekliyor
+
+            queued = await release(s, cfg, "ADMIN", now=datetime.utcnow() + timedelta(minutes=61))
+            await flush_alerts(s, self.telegram)
+            self.assertEqual((queued, len(self.sent)), (1, 2))
+            self.assertIn("800.000 TL", self.sent[1]["text"])     # bekleyenlerin en iyisi
+            self.assertIn("(Son 3 saatte 2 aday arasından en iyisi)", self.sent[1]["text"])
+
+    async def test_daily_cap(self):
+        self.lists()
+        cfg = CompareConfig(min_discount_pct=10.0, release_minutes=0, daily_max=2)
+        async with self.Session() as s:
+            for i in (1, 2, 3):
+                FakeScraper.pages[self.URL] = [listing(i, 800_000 + i)]
+                await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
+        self.assertEqual(len(self.sent), 2)
+
+    async def test_absurdly_cheap_ranks_below_plausible_deal(self):
+        self.lists()
+        cfg = CompareConfig(min_discount_pct=10.0, release_minutes=60)
+        FakeScraper.pages[self.URL] = [listing(1, 450_000), listing(2, 800_000)]  # %55 şüpheli, %20 makul
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("800.000 TL", self.sent[0]["text"])
+
+    async def test_stale_candidates_expire(self):
+        self.lists()
+        cfg = CompareConfig(min_discount_pct=10.0, release_minutes=60)
+        FakeScraper.pages[self.URL] = [listing(1, 850_000), listing(2, 800_000)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=cfg, bench_cfg=BenchConfig())
+            self.assertEqual(len(self.sent), 1)
+            queued = await release(s, cfg, "ADMIN", now=datetime.utcnow() + timedelta(hours=4))
+        self.assertEqual(queued, 0)  # bekleyen aday 3 saati geçti, gönderilmez

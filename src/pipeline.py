@@ -207,16 +207,9 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                 stats.bench_pages += bench.fetched
                 stats.bench_empty += bench.empty_pages
 
-    if compare_on and compare_entries:
-        for entry in compare_mode.pick_best(compare_entries, compare):
-            alert = await enqueue_alert(
-                session, source_listing_id=entry.data["source_listing_id"], mode="compare", dealer_id="",
-                chat_id=market_chat_id, text=compare_mode.format_entry(entry, len(compare_entries)),
-                reason=f"benzerlerinden -%{entry.discount_pct:.1f}")
-            if alert is not None:
-                stats.alerts_queued += 1
-                logger.info(f"Karşılaştırma bildirimi kuyruğa alındı: -%{entry.discount_pct:.1f} -> {entry.data['url']}")
-        await session.commit()
+    if compare_on:
+        await compare_mode.store_candidates(session, compare_entries, compare.min_discount_pct)
+        stats.alerts_queued += await compare_mode.release(session, compare, market_chat_id)
 
     sent, _ = await flush_alerts(session, telegram)
     stats.alerts_sent += sent

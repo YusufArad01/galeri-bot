@@ -1,23 +1,37 @@
 """Sürüm 3 - Karşılaştırma modu (Perplexity'siz).
 
-Her turda 40 yeni ilan taranır, filtrelerden (hasar, yaş/fiyat) geçenler arabam'daki aynı
-donanım/motor/modeldeki güncel ilanların fiyat ortasıyla kıyaslanır. O turun en avantajlı
-ilan(lar)ı (varsayılan 1) Telegram'a gider; yeterince ucuz ilan yoksa mesaj gitmez.
+Her turda yeni ilanlar filtrelerden (hasar, yaş/fiyat) geçirilir ve arabam'daki aynı
+donanım/motor/modeldeki güncel ilanların fiyat ortasıyla kıyaslanır. Eşiği geçenler aday
+havuzuna girer. Mesaj bombardımanı olmasın diye havuzdan düzenli aralıkla (varsayılan saatte
+bir) en iyi aday seçilip gönderilir; günlük üst sınır vardır (varsayılan 15).
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+from loguru import logger
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.benchmark import Benchmark
+from src.models.domain import BotState, CompareCandidate
 from src.modes.market import MIN_VALID_PRICE, discount_pct, fmt_pct, fmt_tl, listing_block
+from src.notifications import enqueue_alert
 
-SUSPICIOUS_PCT = 40.0
+SUSPICIOUS_PCT = 35.0   # bundan büyük fark çoğunlukla hata/dolandırıcılık/gizli hasar: puan düşer
+TR_OFFSET = timedelta(hours=3)  # gün sınırı Türkiye saatine göre
+_SHOWN = ("brand", "model", "trim", "year", "km", "city", "seller_type", "price", "url", "source_listing_id")
 
 
 @dataclass(frozen=True)
 class CompareConfig:
     min_discount_pct: float = 15.0
-    max_items: int = 1
+    max_items: int = 1            # her gönderimde en iyi kaç ilan
+    release_minutes: int = 60     # iki gönderim arası en az süre
+    fresh_hours: float = 3.0      # bundan eski aday gönderilmez (ilan satılmış olabilir)
+    daily_max: int = 15
 
 
 @dataclass(frozen=True)
@@ -40,23 +54,90 @@ async def evaluate(data: dict, bench: Benchmark) -> Entry | None:
     return Entry(data, res.median, res.comparables, res.level, discount_pct(price, res.median))
 
 
-def pick_best(entries: list[Entry], cfg: CompareConfig) -> list[Entry]:
-    ok = [e for e in entries if e.discount_pct >= cfg.min_discount_pct]
-    ok.sort(key=lambda e: e.discount_pct, reverse=True)
-    return ok[: cfg.max_items]
+def score(e: Entry) -> float:
+    """Sıralama puanı: fark büyüdükçe artar, ama SUSPICIOUS_PCT'yi aşınca düşer (aşırı ucuz = şüpheli)."""
+    d = e.discount_pct
+    return d if d <= SUSPICIOUS_PCT else max(0.0, 2 * SUSPICIOUS_PCT - d)
 
 
-def format_entry(e: Entry, scanned: int) -> str:
+def format_entry(e: Entry, pool: int, fresh_hours: float) -> str:
     d = e.data
     warn = ""
     if e.discount_pct >= SUSPICIOUS_PCT:
         warn = "\n⚠️ Çok yüksek fark: kilometre/donanım farkı veya fiyat hatası olabilir, ilanı iyi kontrol edin."
     return (
-        f"🏆 Bu turun en avantajlı ilanı — benzerlerinden %{fmt_pct(e.discount_pct)} ucuz\n\n"
+        f"🏆 Seçilen ilan — benzerlerinden %{fmt_pct(e.discount_pct)} ucuz\n\n"
         f"{listing_block(d)}\n\n"
         f"💰 İlan: {fmt_tl(d['price'])} TL\n"
         f"📊 {e.level} {e.comparables} güncel ilanın ortası: {fmt_tl(e.median)} TL\n"
         f"📉 Fark: {fmt_tl(e.median - float(d['price']))} TL"
         f"{warn}\n\n"
-        f"(Bu turda {scanned} ilan karşılaştırıldı)\n🔗 {d['url']}"
+        f"(Son {fresh_hours:g} saatte {pool} aday arasından en iyisi)\n🔗 {d['url']}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Aday havuzu ve düzenli gönderim
+# --------------------------------------------------------------------------- #
+async def store_candidates(session: AsyncSession, entries: list[Entry], min_discount: float) -> int:
+    """Eşiği geçenleri havuza ekler (aynı ilan iki kez eklenmez). Eklenen sayıyı döner."""
+    added = 0
+    for e in entries:
+        if e.discount_pct < min_discount:
+            continue
+        sid = e.data["source_listing_id"]
+        if (await session.execute(select(CompareCandidate.id).where(CompareCandidate.source_listing_id == sid))).first():
+            continue
+        payload = json.dumps({"data": {k: e.data.get(k) for k in _SHOWN}, "median": e.median,
+                              "comparables": e.comparables, "level": e.level, "discount_pct": e.discount_pct},
+                             ensure_ascii=False)
+        session.add(CompareCandidate(source_listing_id=sid, score=score(e), payload=payload))
+        added += 1
+    await session.commit()
+    return added
+
+
+def _from_payload(raw: str) -> Entry:
+    p = json.loads(raw)
+    return Entry(p["data"], p["median"], p["comparables"], p["level"], p["discount_pct"])
+
+
+async def release(session: AsyncSession, cfg: CompareConfig, chat_id: str, now: datetime | None = None) -> int:
+    """Zamanı geldiyse havuzdaki en iyi aday(lar)ı gönderim kuyruğuna alır. Kuyruğa alınan sayıyı döner."""
+    now = now or datetime.utcnow()
+    state = (await session.execute(select(BotState).where(BotState.key == "compare_last_release"))).scalars().first()
+    if state and now - datetime.fromisoformat(state.value) < timedelta(minutes=cfg.release_minutes):
+        return 0
+
+    fresh_cut = now - timedelta(hours=cfg.fresh_hours)
+    await session.execute(update(CompareCandidate).where(
+        CompareCandidate.status == "NEW", CompareCandidate.created_at < fresh_cut).values(status="EXPIRED"))
+
+    day_start = (now + TR_OFFSET).replace(hour=0, minute=0, second=0, microsecond=0) - TR_OFFSET
+    sent_today = (await session.execute(select(func.count()).select_from(CompareCandidate).where(
+        CompareCandidate.status == "RELEASED", CompareCandidate.released_at >= day_start))).scalar_one()
+    room = min(cfg.max_items, cfg.daily_max - sent_today)
+    if room <= 0:
+        await session.commit()
+        return 0
+
+    pool = (await session.execute(select(CompareCandidate).where(CompareCandidate.status == "NEW")
+                                  .order_by(CompareCandidate.score.desc()))).scalars().all()
+    queued = 0
+    for cand in pool[:room]:
+        entry = _from_payload(cand.payload)
+        alert = await enqueue_alert(
+            session, source_listing_id=cand.source_listing_id, mode="compare", dealer_id="",
+            chat_id=chat_id, text=format_entry(entry, len(pool), cfg.fresh_hours),
+            reason=f"benzerlerinden -%{entry.discount_pct:.1f}")
+        cand.status, cand.released_at = "RELEASED", now
+        if alert is not None:
+            queued += 1
+            logger.info(f"Karşılaştırma bildirimi kuyruğa alındı: -%{entry.discount_pct:.1f} -> {entry.data['url']}")
+    if queued:
+        if state:
+            state.value = now.isoformat()
+        else:
+            session.add(BotState(key="compare_last_release", value=now.isoformat()))
+    await session.commit()
+    return queued

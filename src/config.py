@@ -35,7 +35,10 @@ class Settings(BaseSettings):
 
     # --- Karşılaştırma modu: Perplexity'siz, arabam'daki benzer ilanlarla kıyaslar -------------------
     COMPARE_MIN_DISCOUNT_PCT: float = 15.0   # benzerlerinin ortasından en az bu kadar ucuz
-    COMPARE_MAX_ITEMS: int = 1               # her turda gönderilecek en çok ilan (en avantajlılar)
+    COMPARE_MAX_ITEMS: int = 1               # her gönderimde en iyi kaç ilan
+    COMPARE_RELEASE_MINUTES: int = 60        # iki gönderim arası en az süre (havuzdan en iyisi seçilir)
+    COMPARE_FRESH_HOURS: float = 3.0         # bundan eski aday gönderilmez
+    COMPARE_DAILY_MAX: int = 15              # günde en çok kaç karşılaştırma mesajı (Türkiye saatiyle gün)
     COMPARE_MIN_COMPARABLES: int = 5         # karşılaştırma için en az benzer ilan
     COMPARE_YEAR_TOLERANCE: int = 1
     COMPARE_KM_TOLERANCE_PCT: float = 40.0
