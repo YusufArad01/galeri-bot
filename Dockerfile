@@ -11,7 +11,13 @@ WORKDIR /app
 # Sanal ekran (xvfb) ve gerçek Google Chrome: Cloudflare doğrulaması için gerçek tarayıcı gerekiyor.
 # Kurulamazsa derleme bozulmasın: uygulama paketli Chromium'a döner.
 RUN apt-get update && apt-get install -y --no-install-recommends xvfb && rm -rf /var/lib/apt/lists/*
-RUN playwright install chrome || echo "Google Chrome kurulamadi, paketli Chromium kullanilacak"
+RUN (apt-get update \
+      && apt-get install -y --no-install-recommends wget ca-certificates \
+      && wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+      && apt-get install -y --no-install-recommends /tmp/chrome.deb \
+      && rm -f /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* \
+      && /opt/google/chrome/chrome --version) \
+    || echo "Google Chrome kurulamadi, paketli Chromium kullanilacak"
 
 # Copy the requirements file and install dependencies
 COPY requirements.txt .
