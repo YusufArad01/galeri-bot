@@ -3,6 +3,7 @@ import sys
 import asyncio
 import random
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 from datetime import datetime
 from typing import Any, Dict
 
@@ -92,6 +93,17 @@ ROWS_JS = r'''() => {
 }'''
 
 
+def split_proxy(url: str) -> dict[str, str]:
+    """http://kullanici:sifre@host:port -> Playwright'in beklediği {server, username, password}.
+    Chromium kullanıcı adı/şifreyi adresin içinden okumaz, ayrı verilmesi gerekir."""
+    u = urlsplit(url if "://" in url else f"http://{url}")
+    out = {"server": f"{u.scheme}://{u.hostname}" + (f":{u.port}" if u.port else "")}
+    if u.username:
+        out["username"] = unquote(u.username)
+        out["password"] = unquote(u.password or "")
+    return out
+
+
 class BlockedError(Exception):
     """Captcha / bot koruması / giriş duvarı."""
 
@@ -108,7 +120,7 @@ class ScraperEngine:
         self.last_blocked = False
         self.last_block_note = ""
         self.last_status = 0
-        self._shared = None  # proxy'siz sayfaların ortak context'i
+        self._shared: dict[str, Any] = {}  # proxy adresi (proxy'siz = "") -> ortak context
         self._real_chrome = False
         self._headless_new = True
         self._pw = None
@@ -165,7 +177,7 @@ class ScraperEngine:
         doğrulamasını bir kez geçince çerez diğer sayfalarda ve sonraki turlarda da geçerli kalır."""
         if not self._browser or not self._browser.is_connected():
             logger.warning("Tarayıcı bağlantısı kopmuş, yeniden başlatılıyor.")
-            self._shared = None
+            self._shared = {}
             await self._launch()
         # Türkiye'deki bir kullanıcı gibi görün: sunucu varsayılanı (UTC, en-US) bot izi bırakır
         ctx_kwargs: dict[str, Any] = {
@@ -178,18 +190,16 @@ class ScraperEngine:
             ua, hints = identity(self._browser.version)
             ctx_kwargs["user_agent"] = ua
             ctx_kwargs["extra_http_headers"].update(hints)
-        use_proxy = bool(proxy_url and self._per_context_proxy)
-        if use_proxy:
-            ctx_kwargs["proxy"] = {"server": proxy_url}
-            context = await self._browser.new_context(**ctx_kwargs)
-        else:
-            if self._shared is None:
-                if STATE_PATH.exists():
-                    ctx_kwargs["storage_state"] = str(STATE_PATH)
-                self._shared = await self._browser.new_context(**ctx_kwargs)
-            context = self._shared
+        key = proxy_url if (proxy_url and self._per_context_proxy) else ""
+        if key not in self._shared:
+            if key:
+                ctx_kwargs["proxy"] = split_proxy(key)
+            if STATE_PATH.exists():
+                ctx_kwargs["storage_state"] = str(STATE_PATH)
+            self._shared[key] = await self._browser.new_context(**ctx_kwargs)
+        context = self._shared[key]
         page = await context.new_page()
-        closer = context if use_proxy else page
+        closer = page
         if _stealth_async:
             await _stealth_async(page)
         elif Stealth:
@@ -199,9 +209,9 @@ class ScraperEngine:
 
     # -- yardımcılar ------------------------------------------------------------
     async def _save_state(self):
-        if self._shared is not None:
+        if self._shared:
             try:
-                await self._shared.storage_state(path=str(STATE_PATH))
+                await next(iter(self._shared.values())).storage_state(path=str(STATE_PATH))
             except Exception as e:
                 logger.warning(f"Tarayıcı durumu kaydedilemedi: {e}")
 
