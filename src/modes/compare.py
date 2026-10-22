@@ -16,7 +16,7 @@ SUSPICIOUS_PCT = 40.0
 
 @dataclass(frozen=True)
 class CompareConfig:
-    min_discount_pct: float = 10.0
+    min_discount_pct: float = 15.0
     max_items: int = 1
 
 
