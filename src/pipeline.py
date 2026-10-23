@@ -212,7 +212,8 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                 stats.bench_empty += bench.empty_pages
 
     if compare_on:
-        await compare_mode.store_candidates(session, compare_entries, compare.min_discount_pct)
+        await compare_mode.store_candidates(session, compare_entries, compare.min_discount_pct,
+                                            compare.max_discount_pct)
         stats.alerts_queued += await compare_mode.release(session, compare, market_chat_id)
 
     sent, _ = await flush_alerts(session, telegram)

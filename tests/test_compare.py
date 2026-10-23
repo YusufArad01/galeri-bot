@@ -114,7 +114,7 @@ class CompareModeTests(PipelineBase):
         FakeScraper.pages[self.URL] = [listing(1, 800_000)]  # hiç liste verisi yok (engel gibi)
         async with self.Session() as s:
             st = await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
-        self.assertEqual((self.sent, st.bench_empty), ([], 3))
+        self.assertEqual((self.sent, st.bench_empty), ([], 2))
 
     async def test_market_and_compare_together(self):
         self.lists()
@@ -270,3 +270,24 @@ class DealerBenchTests(PipelineBase):
         self.assertEqual((st.deferred, self.pplx_calls), (0, 0))
         self.assertEqual([m["chat_id"] for m in self.sent], ["222"])
         self.assertIn("Aynı donanımdaki 6 güncel ilanın ortası", self.sent[0]["text"])
+
+
+class StrictQualityTests(PipelineBase):
+    CFG = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, release_minutes=0)
+
+    async def test_extreme_discount_is_not_a_candidate(self):
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 8)]
+        FakeScraper.pages[self.URL] = [listing(1, 450_000)]          # %55: dolandırıcılık/hata şüphesi
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
+        self.assertEqual(self.sent, [])
+
+    async def test_loose_model_level_is_not_used_by_default(self):
+        FakeScraper.lists[BASE] = [row(i, 1_000_000) for i in range(1, 12)]   # sadece tüm model sayfasında veri var
+        FakeScraper.pages[self.URL] = [listing(1, 800_000)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
+            self.assertEqual(self.sent, [])                           # varsayılan: donanım ve motor düzeyi
+            FakeScraper.pages[self.URL] = [listing(2, 800_000)]
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig(levels=3))
+        self.assertEqual(len(self.sent), 1)

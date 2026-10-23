@@ -35,16 +35,18 @@ class Settings(BaseSettings):
 
     # --- Karşılaştırma modu: Perplexity'siz, arabam'daki benzer ilanlarla kıyaslar -------------------
     COMPARE_MIN_DISCOUNT_PCT: float = 15.0   # benzerlerinin ortasından en az bu kadar ucuz
-    COMPARE_MAX_ITEMS: int = 2               # her gönderimde en iyi kaç ilan
-    COMPARE_RELEASE_MINUTES: int = 120       # iki gönderim arası en az süre (havuzdan en iyisi seçilir)
+    COMPARE_MAX_ITEMS: int = 1               # her gönderimde en iyi kaç ilan
+    COMPARE_RELEASE_MINUTES: int = 90        # iki gönderim arası en az süre (havuzdan en iyisi seçilir)
     COMPARE_FRESH_HOURS: float = 3.0         # bundan eski aday gönderilmez
-    COMPARE_DAILY_MAX: int = 15              # günde en çok kaç karşılaştırma mesajı (Türkiye saatiyle gün)
+    COMPARE_DAILY_MAX: int = 10              # günde en çok kaç karşılaştırma mesajı (Türkiye saatiyle gün)
     COMPARE_ACTIVE_START: int = 8            # gönderim saatleri (Türkiye saati), [başlangıç, bitiş)
     COMPARE_ACTIVE_END: int = 23
-    COMPARE_MIN_COMPARABLES: int = 5         # karşılaştırma için en az benzer ilan
+    COMPARE_MIN_COMPARABLES: int = 6         # karşılaştırma için en az benzer ilan
+    COMPARE_LEVELS: int = 2                  # 1=aynı donanım, 2=+aynı motor, 3=+tüm model (gevşek)
+    COMPARE_MAX_DISCOUNT_PCT: float = 40.0   # bundan büyük fark aday olmaz (hata/dolandırıcılık şüphesi)
     COMPARE_MAX_KM: int = 250000             # bunun üstü km'li araçlar aday olmaz (0 = sınır yok)
     COMPARE_YEAR_TOLERANCE: int = 1
-    COMPARE_KM_TOLERANCE_PCT: float = 40.0
+    COMPARE_KM_TOLERANCE_PCT: float = 30.0
     BENCH_TTL_HOURS: float = 6.0             # aynı sayfa bu süre yeniden açılmaz
     BENCH_MAX_FETCH_PER_CYCLE: int = 8       # bir turda açılacak en çok karşılaştırma sayfası
 

@@ -33,10 +33,11 @@ _SHOWN = ("brand", "model", "trim", "year", "km", "city", "seller_type", "price"
 @dataclass(frozen=True)
 class CompareConfig:
     min_discount_pct: float = 15.0
-    max_items: int = 2            # her gönderimde en iyi kaç ilan
-    release_minutes: int = 120    # iki gönderim arası en az süre: bu pencerede toplananlardan en iyileri seçilir
+    max_items: int = 1            # her gönderimde en iyi kaç ilan
+    release_minutes: int = 90     # iki gönderim arası en az süre: bu pencerede toplananlardan en iyisi seçilir
     fresh_hours: float = 3.0      # bundan eski aday gönderilmez (ilan satılmış olabilir)
-    daily_max: int = 15
+    daily_max: int = 10
+    max_discount_pct: float = 40.0  # bundan büyük fark çoğunlukla hata/dolandırıcılık: aday olmaz (0 = sınır yok)
     max_km: int = 250_000         # bunun üstündeki araçlar aday olmaz (0 = sınır yok)
     active_start: int = 8         # Türkiye saatiyle gönderim yapılan saatler [başlangıç, bitiş);
     active_end: int = 23          # gece mesajı günlük hakkı boşa harcamasın
@@ -102,11 +103,12 @@ def format_entry(e: Entry, pool: int, fresh_hours: float) -> str:
 # --------------------------------------------------------------------------- #
 # Aday havuzu ve düzenli gönderim
 # --------------------------------------------------------------------------- #
-async def store_candidates(session: AsyncSession, entries: list[Entry], min_discount: float) -> int:
+async def store_candidates(session: AsyncSession, entries: list[Entry], min_discount: float,
+                           max_discount: float = 0.0) -> int:
     """Eşiği geçenleri havuza ekler (aynı ilan iki kez eklenmez). Eklenen sayıyı döner."""
     added = 0
     for e in entries:
-        if e.discount_pct < min_discount:
+        if e.discount_pct < min_discount or (max_discount and e.discount_pct > max_discount):
             continue
         sid = e.data["source_listing_id"]
         if (await session.execute(select(CompareCandidate.id).where(CompareCandidate.source_listing_id == sid))).first():

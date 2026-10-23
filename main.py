@@ -86,11 +86,13 @@ async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], deale
                         fresh_hours=settings.COMPARE_FRESH_HOURS,
                         daily_max=settings.COMPARE_DAILY_MAX,
                         max_km=settings.COMPARE_MAX_KM,
+                        max_discount_pct=settings.COMPARE_MAX_DISCOUNT_PCT,
                         active_start=settings.COMPARE_ACTIVE_START,
                         active_end=settings.COMPARE_ACTIVE_END,
                     ),
                     bench_cfg=BenchConfig(
                         min_comparables=settings.COMPARE_MIN_COMPARABLES,
+                        levels=settings.COMPARE_LEVELS,
                         year_tolerance=settings.COMPARE_YEAR_TOLERANCE,
                         km_tolerance_pct=settings.COMPARE_KM_TOLERANCE_PCT,
                         ttl_hours=settings.BENCH_TTL_HOURS,

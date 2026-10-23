@@ -30,9 +30,10 @@ class BenchBudget(PriceServiceError):
 
 @dataclass(frozen=True)
 class BenchConfig:
-    min_comparables: int = 5
+    min_comparables: int = 6
+    levels: int = 2   # kaç düzey kullanılsın: 1=donanım, 2=+motor, 3=+tüm model (gevşek)
     year_tolerance: int = 1
-    km_tolerance_pct: float = 40.0
+    km_tolerance_pct: float = 30.0
     # Fiyat etkileri (%), 23.10.2026'da 50 model sayfasında km ve yıl birlikte regresyonla ölçüldü:
     # 10.000 km başına ~%1,5 düşüş, her yeni yıl için ~%3,6 artış.
     km_adjust_pct_per_10k: float = 1.5
@@ -105,7 +106,7 @@ class Benchmark:
     async def stats(self, data: dict) -> BenchResult | None:
         """En özel sayfadan başlayıp yeterli benzer ilan bulunan ilk düzeyin medyanı."""
         year, km = data.get("year") or 0, data.get("km") or 0
-        for level, url in zip(LEVELS, data.get("bench_urls") or []):
+        for level, url in list(zip(LEVELS, data.get("bench_urls") or []))[: self.cfg.levels]:
             comps = [
                 self._adjust(r["price"], r["km"], km, r["year"], year) for r in await self.rows(url)
                 if r["id"] != data["source_listing_id"] and r["price"] >= MIN_PRICE
