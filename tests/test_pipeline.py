@@ -51,7 +51,7 @@ class FakeScraper:
 
     async def fetch_list_rows(self, url):
         FakeScraper.list_fetches.append(url)
-        return [dict(r) for r in FakeScraper.lists.get(url, [])]
+        return [dict(r) for r in FakeScraper.lists.get(url.split("?")[0], [])]  # süzgeç parametreleri yok sayılır
 
     async def fetch_listing_data(self, url):
         for cars in FakeScraper.pages.values():

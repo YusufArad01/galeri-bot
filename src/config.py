@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     COMPARE_DAILY_MAX: int = 10              # günde en çok kaç karşılaştırma mesajı (Türkiye saatiyle gün)
     COMPARE_ACTIVE_START: int = 8            # gönderim saatleri (Türkiye saati), [başlangıç, bitiş)
     COMPARE_ACTIVE_END: int = 23
-    COMPARE_MIN_COMPARABLES: int = 6         # karşılaştırma için en az benzer ilan
+    COMPARE_MIN_COMPARABLES: int = 10        # karşılaştırma için en az benzer ilan (sayfa yıl/km süzgeçli, ~20 ilan gelir)
     COMPARE_LEVELS: int = 2                  # 1=aynı donanım, 2=+aynı motor, 3=+tüm model (gevşek)
     COMPARE_MAX_DISCOUNT_PCT: float = 40.0   # bundan büyük fark aday olmaz (hata/dolandırıcılık şüphesi)
     COMPARE_MAX_KM: int = 200000             # bunun üstü km'li araçlar aday olmaz (0 = sınır yok)

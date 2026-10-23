@@ -6,6 +6,7 @@ BENCH_MAX_FETCH_PER_CYCLE yeni sayfa açılır (siteye az istek = engel riski az
 from __future__ import annotations
 
 import json
+import math
 import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -48,6 +49,17 @@ class BenchResult:
     comparables: int
     level: str
     url: str
+
+
+def filtered_url(url: str, year: int, km: int, year_tol: int, km_pct: float) -> str:
+    """Liste adresine arabam'ın yıl/km süzgecini ekler: sayfadaki ~20 ilanın hepsi benzer olur
+    (süzgeçsiz sayfa ortalama 7 farklı yıldan ilan karıştırır, ±1 yıla az ilan düşer).
+    Km aralığı 10 bine yuvarlanır ki yakın km'li ilanlar aynı önbellek sayfasını paylaşsın."""
+    q = f"minYear={year - year_tol}&maxYear={year + year_tol}"
+    if km:
+        span = max(km * km_pct / 100.0, 15_000)
+        q += f"&minkm={max(0, int((km - span) // 10_000) * 10_000)}&maxkm={math.ceil((km + span) / 10_000) * 10_000}"
+    return url + ("&" if "?" in url else "?") + q
 
 
 def _km_close(a: int, b: int, pct: float) -> bool:
@@ -107,6 +119,8 @@ class Benchmark:
         """En özel sayfadan başlayıp yeterli benzer ilan bulunan ilk düzeyin medyanı."""
         year, km = data.get("year") or 0, data.get("km") or 0
         for level, url in list(zip(LEVELS, data.get("bench_urls") or []))[: self.cfg.levels]:
+            if year:
+                url = filtered_url(url, year, km, self.cfg.year_tolerance, self.cfg.km_tolerance_pct)
             comps = [
                 self._adjust(r["price"], r["km"], km, r["year"], year) for r in await self.rows(url)
                 if r["id"] != data["source_listing_id"] and r["price"] >= MIN_PRICE

@@ -272,6 +272,16 @@ class DealerBenchTests(PipelineBase):
         self.assertIn("Aynı donanımdaki 6 güncel ilanın ortası", self.sent[0]["text"])
 
 
+class FilteredUrlTests(PipelineBase):
+    def test_year_and_km_filter_added(self):
+        from src.benchmark import filtered_url
+        u = filtered_url("https://www.arabam.com/ikinci-el/otomobil/renault-megane", 2018, 100_000, 1, 30.0)
+        self.assertEqual(u, "https://www.arabam.com/ikinci-el/otomobil/renault-megane"
+                            "?minYear=2017&maxYear=2019&minkm=70000&maxkm=130000")
+        self.assertIn("&minYear=", filtered_url("https://x/y?sort=DateDesc", 2018, 0, 1, 30.0))
+        self.assertNotIn("minkm", filtered_url("https://x/y", 2018, 0, 1, 30.0))
+
+
 class StrictQualityTests(PipelineBase):
     CFG = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, release_minutes=0)
 
