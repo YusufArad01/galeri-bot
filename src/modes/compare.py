@@ -38,7 +38,8 @@ class CompareConfig:
     fresh_hours: float = 3.0      # bundan eski aday gönderilmez (ilan satılmış olabilir)
     daily_max: int = 10
     max_discount_pct: float = 40.0  # bundan büyük fark çoğunlukla hata/dolandırıcılık: aday olmaz (0 = sınır yok)
-    max_km: int = 250_000         # bunun üstündeki araçlar aday olmaz (0 = sınır yok)
+    max_km: int = 200_000         # bunun üstündeki araçlar aday olmaz (0 = sınır yok)
+    max_age_years: int = 12       # bundan eski model aday olmaz: alıcısı yok, galericiye faydası yok (0 = sınır yok)
     active_start: int = 8         # Türkiye saatiyle gönderim yapılan saatler [başlangıç, bitiş);
     active_end: int = 23          # gece mesajı günlük hakkı boşa harcamasın
 
@@ -53,10 +54,12 @@ class Entry:
     raw_discount_pct: float = 0.0
 
 
-async def evaluate(data: dict, bench: Benchmark, max_km: int = 0) -> Entry | None:
+async def evaluate(data: dict, bench: Benchmark, max_km: int = 0, min_year: int = 0) -> Entry | None:
     """None = karşılaştırılamadı. Sayfa hakkı dolarsa BenchBudget yükselir (ilan sonraya kalır)."""
     price = float(data["price"])
     if price < MIN_VALID_PRICE or not data.get("year"):
+        return None
+    if min_year and data["year"] < min_year:
         return None
     if max_km and (data.get("km") or 0) > max_km:
         return None

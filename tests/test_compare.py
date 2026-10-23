@@ -282,6 +282,14 @@ class StrictQualityTests(PipelineBase):
             await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
         self.assertEqual(self.sent, [])
 
+    async def test_old_or_high_km_car_is_not_a_candidate(self):
+        # alıcısı olmayan araç: çok eski model ya da çok yüksek km, ne kadar ucuz olursa olsun gitmez
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 8)]
+        FakeScraper.pages[self.URL] = [listing(1, 800_000, year=2012), listing(2, 800_000, km=291_000)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
+        self.assertEqual(self.sent, [])
+
     async def test_loose_model_level_is_not_used_by_default(self):
         FakeScraper.lists[BASE] = [row(i, 1_000_000) for i in range(1, 12)]   # sadece tüm model sayfasında veri var
         FakeScraper.pages[self.URL] = [listing(1, 800_000)]
