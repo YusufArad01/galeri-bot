@@ -235,7 +235,13 @@ def build_listing(url: str, title: str, price_text: str, description: str,
     year, price_ = fields["year"], price
     # 2005 ve eski + 1 milyon TL altı = sıradan eski araç, arbitraj ilgisi yok
     old_cheap = 0 < year <= 2005 and price_ < 1_000_000.0
+    own = BoyaDegisen()
+    for k, v in props.items():
+        if "boya" in fold(k) or "degisen" in fold(k):
+            own = parse_boya_degisen(v)
     return {
+        "degisen": own.degisen,
+        "boyali": own.boyali,
         "source_listing_id": source_id_from_url(url),
         "title": title,
         "description": description or "",

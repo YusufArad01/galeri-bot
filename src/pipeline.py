@@ -67,7 +67,8 @@ async def process_listing(data: dict, *, session: AsyncSession, prices: PriceSer
                           stats: CycleStats, modes: set[str], dealers: list[dealer_mode.Dealer],
                           market_chat_id: str, threshold_pct: float, suspicious_pct: float,
                           bench: Benchmark | None = None,
-                          compare_out: list[compare_mode.Entry] | None = None) -> None:
+                          compare_out: list[compare_mode.Entry] | None = None,
+                          max_km: int = 0) -> None:
     """İlanı değerlendirir, kaydeder, bildirimleri outbox'a yazar.
 
     Fiyat servisi hatasında ilan KAYDEDİLMEZ ve PriceServiceError yükseltilir; sonraki döngüde
@@ -98,7 +99,7 @@ async def process_listing(data: dict, *, session: AsyncSession, prices: PriceSer
     if "compare" in modes and bench is not None and compare_out is not None and not data.get("is_disqualified"):
         stats.evaluated += 1
         try:
-            entry = await compare_mode.evaluate(data, bench)
+            entry = await compare_mode.evaluate(data, bench, max_km)
             if entry:
                 compare_out.append(entry)
         except PriceServiceError as exc:  # BenchBudget de buradan geçer
@@ -184,7 +185,8 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                     await process_listing(
                         data, session=session, prices=prices, stats=stats, modes=modes, dealers=dealers,
                         market_chat_id=market_chat_id, threshold_pct=threshold_pct, suspicious_pct=suspicious_pct,
-                        bench=bench, compare_out=compare_entries)
+                        bench=bench, compare_out=compare_entries,
+                        max_km=compare.max_km if compare else 0)
                 except PriceServiceError as exc:
                     await session.rollback()
                     stats.deferred += 1

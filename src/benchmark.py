@@ -33,8 +33,10 @@ class BenchConfig:
     min_comparables: int = 5
     year_tolerance: int = 1
     km_tolerance_pct: float = 40.0
-    # 10.000 km başına fiyat düşüşü (%). 22.10.2026'da 34 model/yıl grubunda ölçüldü: medyan ~%2.
-    km_adjust_pct_per_10k: float = 2.0
+    # Fiyat etkileri (%), 23.10.2026'da 50 model sayfasında km ve yıl birlikte regresyonla ölçüldü:
+    # 10.000 km başına ~%1,5 düşüş, her yeni yıl için ~%3,6 artış.
+    km_adjust_pct_per_10k: float = 1.5
+    year_adjust_pct_per_year: float = 3.5
     ttl_hours: float = 6.0
     max_fetch_per_cycle: int = 8
 
@@ -89,12 +91,15 @@ class Benchmark:
         self._memo[url] = rows
         return rows
 
-    def _adjust(self, price: float, peer_km: int, km: int) -> float:
-        """Benzer ilanın fiyatını kıyaslanan aracın kilometresine göre düzeltir: daha çok yürümüş
-        benzer doğal olarak ucuzdur, aksi halde çok km yapmış araçlar sahte 'fırsat' görünür."""
-        if not km or not peer_km:
-            return price
-        factor = 1 + self.cfg.km_adjust_pct_per_10k / 100.0 * (peer_km - km) / 10_000
+    def _adjust(self, price: float, peer_km: int, km: int, peer_year: int = 0, year: int = 0) -> float:
+        """Benzer ilanın fiyatını kıyaslanan aracın kilometresine ve yılına göre düzeltir: daha çok
+        yürümüş ya da daha eski benzer doğal olarak ucuzdur; düzeltilmezse çok km yapmış/eski araçlar
+        sahte 'fırsat' görünür. Toplam düzeltme ±%30 ile sınırlı."""
+        factor = 1.0
+        if km and peer_km:
+            factor += self.cfg.km_adjust_pct_per_10k / 100.0 * (peer_km - km) / 10_000
+        if year and peer_year:
+            factor += self.cfg.year_adjust_pct_per_year / 100.0 * (year - peer_year)
         return price * min(1.3, max(0.7, factor))
 
     async def stats(self, data: dict) -> BenchResult | None:
@@ -102,7 +107,7 @@ class Benchmark:
         year, km = data.get("year") or 0, data.get("km") or 0
         for level, url in zip(LEVELS, data.get("bench_urls") or []):
             comps = [
-                self._adjust(r["price"], r["km"], km) for r in await self.rows(url)
+                self._adjust(r["price"], r["km"], km, r["year"], year) for r in await self.rows(url)
                 if r["id"] != data["source_listing_id"] and r["price"] >= MIN_PRICE
                 and abs(r["year"] - year) <= self.cfg.year_tolerance
                 and _km_close(km, r["km"], self.cfg.km_tolerance_pct)

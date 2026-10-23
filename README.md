@@ -51,6 +51,7 @@ ayarla devam eder ve yöneticiye uyarı gönderir.
 | `COMPARE_MIN_DISCOUNT_PCT` / `COMPARE_MAX_ITEMS` | `15` / `1` | Aday olmak için en az ucuzluk (%) ve her gönderimde en iyi kaç ilan. |
 | `COMPARE_RELEASE_MINUTES` / `COMPARE_FRESH_HOURS` / `COMPARE_DAILY_MAX` | `120` / `3` / `15` | Gönderimler arası süre (bu pencerede toplananlardan en iyiler seçilir), adayın en çok yaşı, günlük mesaj sınırı. |
 | `COMPARE_MAX_ITEMS` | `2` | Her gönderimde en iyi kaç ilan. |
+| `COMPARE_MAX_KM` | `250000` | Bunun üstü kilometreli araçlar aday olmaz (0 = sınır yok). |
 | `COMPARE_ACTIVE_START` / `COMPARE_ACTIVE_END` | `8` / `23` | Gönderim saatleri (Türkiye saati). Gece mesajı günlük hakkı harcamasın. |
 | `COMPARE_MIN_COMPARABLES` / `COMPARE_YEAR_TOLERANCE` / `COMPARE_KM_TOLERANCE_PCT` | `5` / `1` / `40` | En az benzer ilan, yıl farkı, km farkı (%). |
 | `BENCH_TTL_HOURS` / `BENCH_MAX_FETCH_PER_CYCLE` | `6` / `8` | Karşılaştırma sayfası önbellek süresi ve turda açılacak en çok yeni sayfa. |

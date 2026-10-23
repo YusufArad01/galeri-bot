@@ -20,9 +20,14 @@ from src.models.domain import BotState, CompareCandidate
 from src.modes.market import MIN_VALID_PRICE, discount_pct, fmt_pct, fmt_tl, listing_block
 from src.notifications import enqueue_alert
 
+# Boya/değişen payı: benzer ilanlar çoğunlukla temiz, hasarlı ilan doğal olarak ucuz. Veriyle ölçülmedi, tahmini
+# değerler (puan): bir değişen parça ~4, bir boyalı/lokal boyalı parça ~1,5 puan fark yaratır.
+PENALTY_PER_DEGISEN = 4.0
+PENALTY_PER_BOYALI = 1.5
 SUSPICIOUS_PCT = 35.0   # bundan büyük fark çoğunlukla hata/dolandırıcılık/gizli hasar: puan düşer
 TR_OFFSET = timedelta(hours=3)  # gün sınırı Türkiye saatine göre
-_SHOWN = ("brand", "model", "trim", "year", "km", "city", "seller_type", "price", "url", "source_listing_id")
+_SHOWN = ("brand", "model", "trim", "year", "km", "city", "seller_type", "price", "url", "source_listing_id",
+          "degisen", "boyali")
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,7 @@ class CompareConfig:
     release_minutes: int = 120    # iki gönderim arası en az süre: bu pencerede toplananlardan en iyileri seçilir
     fresh_hours: float = 3.0      # bundan eski aday gönderilmez (ilan satılmış olabilir)
     daily_max: int = 15
+    max_km: int = 250_000         # bunun üstündeki araçlar aday olmaz (0 = sınır yok)
     active_start: int = 8         # Türkiye saatiyle gönderim yapılan saatler [başlangıç, bitiş);
     active_end: int = 23          # gece mesajı günlük hakkı boşa harcamasın
 
@@ -42,24 +48,38 @@ class Entry:
     median: float
     comparables: int
     level: str
-    discount_pct: float
+    discount_pct: float        # boya/değişen payı düşülmüş fark: sıralama ve eşik bununla yapılır
+    raw_discount_pct: float = 0.0
 
 
-async def evaluate(data: dict, bench: Benchmark) -> Entry | None:
+async def evaluate(data: dict, bench: Benchmark, max_km: int = 0) -> Entry | None:
     """None = karşılaştırılamadı. Sayfa hakkı dolarsa BenchBudget yükselir (ilan sonraya kalır)."""
     price = float(data["price"])
     if price < MIN_VALID_PRICE or not data.get("year"):
         return None
+    if max_km and (data.get("km") or 0) > max_km:
+        return None
     res = await bench.stats(data)
     if res is None:
         return None
-    return Entry(data, res.median, res.comparables, res.level, discount_pct(price, res.median))
+    raw = discount_pct(price, res.median)
+    penalty = PENALTY_PER_DEGISEN * (data.get("degisen") or 0) + PENALTY_PER_BOYALI * (data.get("boyali") or 0)
+    return Entry(data, res.median, res.comparables, res.level, raw - penalty, raw)
 
 
 def score(e: Entry) -> float:
     """Sıralama puanı: fark büyüdükçe artar, ama SUSPICIOUS_PCT'yi aşınca düşer (aşırı ucuz = şüpheli)."""
     d = e.discount_pct
     return d if d <= SUSPICIOUS_PCT else max(0.0, 2 * SUSPICIOUS_PCT - d)
+
+
+def damage_line(d: dict) -> str:
+    parts = []
+    if d.get("degisen"):
+        parts.append(f"{d['degisen']} değişen")
+    if d.get("boyali"):
+        parts.append(f"{d['boyali']} boyalı")
+    return f"\n🔧 Boya/değişen: {', '.join(parts)} (farktan düşüldü)" if parts else "\n🔧 Boya/değişen: yok"
 
 
 def format_entry(e: Entry, pool: int, fresh_hours: float) -> str:
@@ -72,7 +92,8 @@ def format_entry(e: Entry, pool: int, fresh_hours: float) -> str:
         f"{listing_block(d)}\n\n"
         f"💰 İlan: {fmt_tl(d['price'])} TL\n"
         f"📊 {e.level} {e.comparables} güncel ilanın ortası: {fmt_tl(e.median)} TL\n"
-        f"📉 Fark: {fmt_tl(e.median - float(d['price']))} TL"
+        f"📉 Fark: {fmt_tl(e.median - float(d['price']))} TL (%{fmt_pct(e.raw_discount_pct)})"
+        f"{damage_line(d)}"
         f"{warn}\n\n"
         f"(Son {fresh_hours:g} saatte {pool} aday arasından en iyisi)\n🔗 {d['url']}"
     )
@@ -91,7 +112,8 @@ async def store_candidates(session: AsyncSession, entries: list[Entry], min_disc
         if (await session.execute(select(CompareCandidate.id).where(CompareCandidate.source_listing_id == sid))).first():
             continue
         payload = json.dumps({"data": {k: e.data.get(k) for k in _SHOWN}, "median": e.median,
-                              "comparables": e.comparables, "level": e.level, "discount_pct": e.discount_pct},
+                              "comparables": e.comparables, "level": e.level, "discount_pct": e.discount_pct,
+                              "raw_discount_pct": e.raw_discount_pct},
                              ensure_ascii=False)
         session.add(CompareCandidate(source_listing_id=sid, score=score(e), payload=payload))
         added += 1
@@ -101,7 +123,8 @@ async def store_candidates(session: AsyncSession, entries: list[Entry], min_disc
 
 def _from_payload(raw: str) -> Entry:
     p = json.loads(raw)
-    return Entry(p["data"], p["median"], p["comparables"], p["level"], p["discount_pct"])
+    return Entry(p["data"], p["median"], p["comparables"], p["level"], p["discount_pct"],
+                 p.get("raw_discount_pct", p["discount_pct"]))
 
 
 async def release(session: AsyncSession, cfg: CompareConfig, chat_id: str, now: datetime | None = None) -> int:

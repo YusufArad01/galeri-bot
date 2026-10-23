@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     COMPARE_ACTIVE_START: int = 8            # gönderim saatleri (Türkiye saati), [başlangıç, bitiş)
     COMPARE_ACTIVE_END: int = 23
     COMPARE_MIN_COMPARABLES: int = 5         # karşılaştırma için en az benzer ilan
+    COMPARE_MAX_KM: int = 250000             # bunun üstü km'li araçlar aday olmaz (0 = sınır yok)
     COMPARE_YEAR_TOLERANCE: int = 1
     COMPARE_KM_TOLERANCE_PCT: float = 40.0
     BENCH_TTL_HOURS: float = 6.0             # aynı sayfa bu süre yeniden açılmaz
