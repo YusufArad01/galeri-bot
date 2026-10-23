@@ -219,7 +219,8 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
 
     if compare_on:
         await compare_mode.store_candidates(session, compare_entries, compare.min_discount_pct,
-                                            compare.max_discount_pct)
+                                            compare.max_discount_pct, compare.min_profit_tl,
+                                            compare.min_profit_pct)
         stats.alerts_queued += await compare_mode.release(session, compare, market_chat_id)
 
     sent, _ = await flush_alerts(session, telegram)

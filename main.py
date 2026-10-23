@@ -88,6 +88,8 @@ async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], deale
                         max_km=settings.COMPARE_MAX_KM,
                         max_age_years=settings.COMPARE_MAX_AGE_YEARS,
                         max_discount_pct=settings.COMPARE_MAX_DISCOUNT_PCT,
+                        min_profit_tl=settings.COMPARE_MIN_PROFIT_TL,
+                        min_profit_pct=settings.COMPARE_MIN_PROFIT_PCT,
                         active_start=settings.COMPARE_ACTIVE_START,
                         active_end=settings.COMPARE_ACTIVE_END,
                     ),

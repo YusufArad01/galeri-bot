@@ -282,6 +282,30 @@ class FilteredUrlTests(PipelineBase):
         self.assertNotIn("minkm", filtered_url("https://x/y", 2018, 0, 1, 30.0))
 
 
+class ProfitRuleTests(PipelineBase):
+    CFG = CompareConfig(active_start=0, active_end=24, min_discount_pct=15.0, release_minutes=0,
+                        max_discount_pct=30.0, min_profit_tl=150_000, min_profit_pct=8.0)
+
+    async def test_tl_profit_path_and_caps(self):
+        FakeScraper.lists[TRIM] = [row(i, 2_000_000) for i in range(1, 12)]
+        FakeScraper.pages[self.URL] = [
+            listing(1, 1_800_000),   # %10 ve 200 bin TL: TL yolundan geçer
+            listing(2, 1_900_000),   # %5, 100 bin TL: geçmez
+            listing(3, 1_300_000),   # %35: üst sınırı aşar, geçmez
+        ]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("1.800.000 TL", self.sent[0]["text"])
+
+    async def test_cheap_car_small_tl_gap_needs_percent(self):
+        FakeScraper.lists[TRIM] = [row(i, 400_000) for i in range(1, 12)]
+        FakeScraper.pages[self.URL] = [listing(1, 350_000)]   # %12,5 ama 50 bin TL: ne %15 ne TL yolu
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
+        self.assertEqual(self.sent, [])
+
+
 class StrictQualityTests(PipelineBase):
     CFG = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, release_minutes=0)
 

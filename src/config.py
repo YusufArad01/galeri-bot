@@ -43,7 +43,9 @@ class Settings(BaseSettings):
     COMPARE_ACTIVE_END: int = 23
     COMPARE_MIN_COMPARABLES: int = 10        # karşılaştırma için en az benzer ilan (sayfa yıl/km süzgeçli, ~20 ilan gelir)
     COMPARE_LEVELS: int = 2                  # 1=aynı donanım, 2=+aynı motor, 3=+tüm model (gevşek)
-    COMPARE_MAX_DISCOUNT_PCT: float = 40.0   # bundan büyük fark aday olmaz (hata/dolandırıcılık şüphesi)
+    COMPARE_MAX_DISCOUNT_PCT: float = 30.0   # bundan büyük fark aday olmaz (hata/dolandırıcılık/işe yaramaz araç)
+    COMPARE_MIN_PROFIT_TL: int = 150000      # %15 altında bile: bu kadar TL ucuzsa ve fark alt yüzdeyi geçiyorsa aday (0 = kapalı)
+    COMPARE_MIN_PROFIT_PCT: float = 8.0
     COMPARE_MAX_KM: int = 200000             # bunun üstü km'li araçlar aday olmaz (0 = sınır yok)
     COMPARE_MAX_AGE_YEARS: int = 12          # bundan eski model aday olmaz (0 = sınır yok)
     COMPARE_YEAR_TOLERANCE: int = 1

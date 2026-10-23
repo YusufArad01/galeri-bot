@@ -37,7 +37,11 @@ class CompareConfig:
     release_minutes: int = 90     # iki gönderim arası en az süre: bu pencerede toplananlardan en iyisi seçilir
     fresh_hours: float = 3.0      # bundan eski aday gönderilmez (ilan satılmış olabilir)
     daily_max: int = 10
-    max_discount_pct: float = 40.0  # bundan büyük fark çoğunlukla hata/dolandırıcılık: aday olmaz (0 = sınır yok)
+    max_discount_pct: float = 30.0  # bundan büyük fark çoğunlukla hata/dolandırıcılık/ucuz-işe yaramaz araç: aday olmaz (0 = sınır yok)
+    # Yüzde eşiğinin yanında TL kâr yolu: pahalı araçta %15 beklemeden, kâr yeterliyse ve fark hata payının
+    # (~%5) üstündeyse aday olur. 0 = bu yol kapalı.
+    min_profit_tl: int = 150_000
+    min_profit_pct: float = 8.0
     max_km: int = 200_000         # bunun üstündeki araçlar aday olmaz (0 = sınır yok)
     max_age_years: int = 12       # bundan eski model aday olmaz: alıcısı yok, galericiye faydası yok (0 = sınır yok)
     active_start: int = 8         # Türkiye saatiyle gönderim yapılan saatler [başlangıç, bitiş);
@@ -106,12 +110,22 @@ def format_entry(e: Entry, pool: int, fresh_hours: float) -> str:
 # --------------------------------------------------------------------------- #
 # Aday havuzu ve düzenli gönderim
 # --------------------------------------------------------------------------- #
+def passes(e: Entry, min_discount: float, max_discount: float = 0.0, min_profit_tl: int = 0,
+           min_profit_pct: float = 0.0) -> bool:
+    """Yüzde eşiği YA DA (TL kâr eşiği VE alt yüzde); her iki durumda da üst sınırın altında."""
+    if max_discount and e.discount_pct > max_discount:
+        return False
+    if e.discount_pct >= min_discount:
+        return True
+    return bool(min_profit_tl) and e.discount_pct >= min_profit_pct         and e.median * e.discount_pct / 100.0 >= min_profit_tl
+
+
 async def store_candidates(session: AsyncSession, entries: list[Entry], min_discount: float,
-                           max_discount: float = 0.0) -> int:
+                           max_discount: float = 0.0, min_profit_tl: int = 0, min_profit_pct: float = 0.0) -> int:
     """Eşiği geçenleri havuza ekler (aynı ilan iki kez eklenmez). Eklenen sayıyı döner."""
     added = 0
     for e in entries:
-        if e.discount_pct < min_discount or (max_discount and e.discount_pct > max_discount):
+        if not passes(e, min_discount, max_discount, min_profit_tl, min_profit_pct):
             continue
         sid = e.data["source_listing_id"]
         if (await session.execute(select(CompareCandidate.id).where(CompareCandidate.source_listing_id == sid))).first():
