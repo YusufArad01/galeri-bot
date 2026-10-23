@@ -102,6 +102,9 @@ async def process_listing(data: dict, *, session: AsyncSession, prices: PriceSer
         try:
             entry = await compare_mode.evaluate(data, bench, max_km, min_year)
             if entry:
+                # her kıyas sonucu loga: günlük kaç ilan hangi eşiği geçerdi, buradan sayılır
+                logger.info(f"Kıyas {data['source_listing_id']}: fark %{entry.discount_pct:.1f} "
+                            f"({entry.median - float(data['price']):.0f} TL), {entry.comparables} benzer")
                 compare_out.append(entry)
         except PriceServiceError as exc:  # BenchBudget de buradan geçer
             deferred = deferred or exc
