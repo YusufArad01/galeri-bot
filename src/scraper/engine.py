@@ -73,7 +73,8 @@ LISTING_JS = r'''() => {
     const breadcrumbs = Array.from(document.querySelectorAll('.breadcrumb li a, .bc-item a')).map(i => text(i));
     // marka > seri > motor > donanım sayfalarına giden göreli bağlantılar (aynı modelin güncel ilanları orada)
     const crumbs = Array.from(document.querySelectorAll('a[href^="/ikinci-el/otomobil/"]')).map(a => a.getAttribute('href'));
-    return { title, priceText, description, props, breadcrumbs, crumbs };
+    const location = text(document.querySelector('.product-location'));  // "Mahalle, İlçe, İl"
+    return { title, priceText, description, props, breadcrumbs, crumbs, location };
 }'''
 
 LINKS_JS = r'''() => {
@@ -344,7 +345,7 @@ class ScraperEngine:
                     url=url, title=raw["title"], price_text=raw["priceText"],
                     description=raw["description"], props=raw["props"], breadcrumbs=raw["breadcrumbs"],
                     max_degisen=settings.MAX_DEGISEN, max_boyali=settings.MAX_BOYALI,
-                    crumbs=raw.get("crumbs") or [],
+                    crumbs=raw.get("crumbs") or [], location=raw.get("location") or "",
                 )
                 if proxy:
                     await self.proxy_manager.mark_success(proxy.id)

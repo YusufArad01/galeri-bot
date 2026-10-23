@@ -31,6 +31,13 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(d["seller_type"], "Galeriden")
         self.assertFalse(d["is_heavy_damage"])  # 4 lokal boya: izin verilen en fazla 4
 
+    def test_city_from_location_when_title_has_none(self):
+        # Satıcı başlığa kendi cümlesini yazınca şehir başlıkta olmaz; konum alanından alınır
+        d = build_listing(MEGANE_URL, "Ağır bakımları yeni yapıldı, triger, balata, yağ değişti", "875.000 TL", "",
+                          {"marka": "Volkswagen", "seri": "Polo", "yıl": "2015", "kilometre": "121.000 KM"},
+                          location="Hacimbey Mh. Hendek, Sakarya")
+        self.assertEqual(d["city"], "Sakarya")
+
     def test_fields_fall_back_to_title(self):
         d = build_listing(MEGANE_URL, MEGANE_TITLE, "905.000 TL", "", {})
         self.assertEqual((d["year"], d["km"], d["city"]), (2018, 203000, "Denizli"))

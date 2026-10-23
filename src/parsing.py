@@ -163,7 +163,8 @@ def _split_brand_from_title(title: str) -> tuple[str, str]:
     return brand, model
 
 
-def parse_listing_fields(props: dict[str, str], title: str, breadcrumbs: list[str] | None = None) -> dict:
+def parse_listing_fields(props: dict[str, str], title: str, breadcrumbs: list[str] | None = None,
+                         location: str = "") -> dict:
     """Marka, seri (model), donanım (trim), yıl, km, şehir, satıcı tipi."""
     f = {fold(k): v for k, v in props.items()}
 
@@ -183,6 +184,8 @@ def parse_listing_fields(props: dict[str, str], title: str, breadcrumbs: list[st
             km = parse_int(m.group(1))
 
     city = f.get("il") or f.get("sehir") or f.get("konum") or ""
+    if not city and location:  # "Hacimbey Mh. Hendek, Sakarya" -> "Sakarya"
+        city = location.split(",")[-1].strip()
     if not city:
         m = re.search(r"model\s+(.+?)\s+[\d.]+\s*km", title, re.IGNORECASE)
         if m:
@@ -223,10 +226,11 @@ def parse_listing_fields(props: dict[str, str], title: str, breadcrumbs: list[st
 
 def build_listing(url: str, title: str, price_text: str, description: str,
                   props: dict[str, str], breadcrumbs: list[str] | None = None,
-                  max_degisen: int = 2, max_boyali: int = 4, crumbs: list[str] | None = None) -> dict:
+                  max_degisen: int = 2, max_boyali: int = 4, crumbs: list[str] | None = None,
+                  location: str = "") -> dict:
     """Ham DOM verisinden pipeline'ın beklediği ilan sözlüğünü üretir."""
     price = parse_tl(price_text)
-    fields = parse_listing_fields(props, title, breadcrumbs)
+    fields = parse_listing_fields(props, title, breadcrumbs, location)
     dmg = assess_damage(props, title, description, max_degisen, max_boyali)
     year, price_ = fields["year"], price
     # 2005 ve eski + 1 milyon TL altı = sıradan eski araç, arbitraj ilgisi yok
