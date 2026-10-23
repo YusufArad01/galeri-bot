@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import random
-from datetime import datetime
 from typing import Callable
 
 from loguru import logger
@@ -69,7 +68,7 @@ async def process_listing(data: dict, *, session: AsyncSession, prices: PriceSer
                           market_chat_id: str, threshold_pct: float, suspicious_pct: float,
                           bench: Benchmark | None = None,
                           compare_out: list[compare_mode.Entry] | None = None,
-                          max_km: int = 0, min_year: int = 0) -> None:
+                          compare_cfg: compare_mode.CompareConfig | None = None) -> None:
     """İlanı değerlendirir, kaydeder, bildirimleri outbox'a yazar.
 
     Fiyat servisi hatasında ilan KAYDEDİLMEZ ve PriceServiceError yükseltilir; sonraki döngüde
@@ -100,7 +99,7 @@ async def process_listing(data: dict, *, session: AsyncSession, prices: PriceSer
     if "compare" in modes and bench is not None and compare_out is not None and not data.get("is_disqualified"):
         stats.evaluated += 1
         try:
-            entry = await compare_mode.evaluate(data, bench, max_km, min_year)
+            entry = await compare_mode.evaluate(data, bench, compare_cfg)
             if entry:
                 compare_out.append(entry)
         except PriceServiceError as exc:  # BenchBudget de buradan geçer
@@ -145,7 +144,6 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
     budget = max_listings
     compare_entries: list[compare_mode.Entry] = []
     compare_on = "compare" in modes and compare is not None
-    min_year = datetime.now().year - compare.max_age_years if compare and compare.max_age_years else 0
     for kind, urls in groups.items():
         proxy_manager = ProxyManager(session)
         async with engine_factory(kind, proxy_manager) as scraper:
@@ -188,8 +186,7 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                         data, session=session, prices=prices, stats=stats, modes=modes, dealers=dealers,
                         market_chat_id=market_chat_id, threshold_pct=threshold_pct, suspicious_pct=suspicious_pct,
                         bench=bench, compare_out=compare_entries,
-                        max_km=compare.max_km if compare else 0,
-                        min_year=min_year)
+                        compare_cfg=compare)
                 except PriceServiceError as exc:
                     await session.rollback()
                     stats.deferred += 1

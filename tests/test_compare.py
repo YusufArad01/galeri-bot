@@ -282,10 +282,19 @@ class StrictQualityTests(PipelineBase):
             await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
         self.assertEqual(self.sent, [])
 
-    async def test_old_or_high_km_car_is_not_a_candidate(self):
-        # alıcısı olmayan araç: çok eski model ya da çok yüksek km, ne kadar ucuz olursa olsun gitmez
-        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 8)]
-        FakeScraper.pages[self.URL] = [listing(1, 800_000, year=2012), listing(2, 800_000, km=291_000)]
+    async def test_worn_car_needs_low_price_but_old_model_with_market_is_ok(self):
+        # yıpranmış (eski ya da çok km): pahalıysa gitmez, 200 bin TL altındaysa gider; 250 bin km üstü hiç gitmez
+        FakeScraper.lists[TRIM] = [row(i, 200_000, year=2005) for i in range(1, 8)]
+        FakeScraper.pages[self.URL] = [listing(1, 150_000, year=2005, km=100_000), listing(2, 800_000, year=2005),
+                                       listing(3, 150_000, km=291_000)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("150.000 TL", self.sent[0]["text"])
+
+    async def test_old_model_without_market_is_not_a_candidate(self):
+        FakeScraper.lists[TRIM] = [row(i, 200_000, year=2018) for i in range(1, 8)]   # 2005 model için benzer ilan yok
+        FakeScraper.pages[self.URL] = [listing(1, 150_000, year=2005)]
         async with self.Session() as s:
             await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
         self.assertEqual(self.sent, [])

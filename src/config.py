@@ -44,8 +44,10 @@ class Settings(BaseSettings):
     COMPARE_MIN_COMPARABLES: int = 6         # karşılaştırma için en az benzer ilan
     COMPARE_LEVELS: int = 2                  # 1=aynı donanım, 2=+aynı motor, 3=+tüm model (gevşek)
     COMPARE_MAX_DISCOUNT_PCT: float = 40.0   # bundan büyük fark aday olmaz (hata/dolandırıcılık şüphesi)
-    COMPARE_MAX_KM: int = 200000             # bunun üstü km'li araçlar aday olmaz (0 = sınır yok)
-    COMPARE_MAX_AGE_YEARS: int = 12          # bundan eski model aday olmaz (0 = sınır yok)
+    COMPARE_MAX_KM: int = 250000             # bunun üstü km'li araçlar aday olmaz (0 = sınır yok)
+    COMPARE_WORN_AGE_YEARS: int = 12         # bundan eski model "yıpranmış" sayılır (0 = kapalı)
+    COMPARE_WORN_KM: int = 200000            # bundan çok km'li araç "yıpranmış" sayılır (0 = kapalı)
+    COMPARE_WORN_MAX_PRICE: int = 200000     # yıpranmış araç yalnız bu fiyatın altındaysa aday olur (0 = şart yok)
     COMPARE_YEAR_TOLERANCE: int = 1
     COMPARE_KM_TOLERANCE_PCT: float = 30.0
     BENCH_TTL_HOURS: float = 6.0             # aynı sayfa bu süre yeniden açılmaz
