@@ -115,6 +115,33 @@ class AlternativesTests(unittest.TestCase):
         self.assertFalse(self.rule.matches(dict(ok, paint_parts=["Arka Kaput"])))
 
 
+class PriceModelTests(unittest.TestCase):
+    MODEL = {"ref_year": 2016, "paint_part_tl": 35000, "east_tl": 115000,
+             "premiums": [{"words": ["highline"], "tl": 140000}],
+             "bands": [[110000, 125000, 1620000, 1750000], [140000, 155000, 1480000, 1580000],
+                       [170000, 190000, 1380000, 1480000], [200000, 260000, 1300000, 1420000]]}
+
+    def model(self):
+        from src.modes.dealer import _price_model
+        return _price_model(self.MODEL)
+
+    def test_interpolation_year_paint_region_premium(self):
+        m = self.model()
+        base = {"km": 116000, "year": 2016, "city": "İstanbul", "title": "Passat Comfortline", "paint_parts": []}
+        self.assertAlmostEqual(m.expected(base), 1_693_000, delta=10_000)                        # bandın üst yarısı
+        self.assertAlmostEqual(m.expected(dict(base, km=182000)), 1_430_000, delta=10_000)       # bant merkezi
+        self.assertAlmostEqual(m.expected(dict(base, city="Mardin")), m.expected(base) - 115_000, delta=1)
+        self.assertAlmostEqual(m.expected(dict(base, paint_parts=["Sol Ön Kapı", "Tavan"])), m.expected(base) - 70_000, delta=1)
+        self.assertAlmostEqual(m.expected(dict(base, title="Passat Highline")), m.expected(base) + 140_000, delta=1)
+        self.assertAlmostEqual(m.expected(dict(base, year=2017)), m.expected(base) * 1.035, delta=100)
+        self.assertIsNone(m.expected(dict(base, km=450000)))                                     # bantların çok dışı
+
+    def test_example_listing_from_screenshot_is_not_a_deal(self):
+        m = self.model()
+        d = {"km": 116000, "year": 2016, "city": "Mardin", "title": "Sahibinden Passat Comfortline", "paint_parts": []}
+        self.assertLess(m.expected(d) - 1_695_000, 0)                                            # Mardin ilanı bile referansın üstünde
+
+
 class TramerTextTests(unittest.TestCase):
     def test_description_tramer(self):
         self.assertEqual(tramer_from_text("TRAMER 2Bin TL, bakımları yapıldı"), 2000)

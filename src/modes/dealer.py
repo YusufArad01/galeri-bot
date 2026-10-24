@@ -24,6 +24,52 @@ class DealerConfigError(ValueError):
     pass
 
 
+EAST = {"mardin", "diyarbakir", "sanliurfa", "batman", "siirt", "sirnak", "hakkari", "van", "bitlis", "mus", "bingol",
+        "elazig", "malatya", "adiyaman", "gaziantep", "kilis", "erzurum", "erzincan", "kars", "agri", "igdir", "ardahan",
+        "tunceli", "bayburt"}
+METRO = {"istanbul", "ankara", "izmir", "bursa", "antalya", "kocaeli"}
+
+
+@dataclass(frozen=True)
+class PriceModel:
+    """Galericinin verdiği km-fiyat bantları (temiz, büyükşehir aracı için) + düzeltmeler.
+    Referans fiyat = bant merkezleri arası doğrusal ara değer, model yılı, boya, bölge ve donanım düzeltmeli."""
+    ref_year: int
+    bands: tuple[tuple[int, int, int, int], ...]     # (km_alt, km_üst, fiyat_alt, fiyat_üst), km artan sırada
+    year_pct: float = 3.5                           # model yılı başına fiyat farkı (%)
+    paint_part_tl: int = 0                          # boyalı parça başına düşüş
+    east_tl: int = 0                                # Doğu/Güneydoğu illerinde indirim
+    nonmetro_tl: int = 0                            # büyükşehir dışında indirim (Doğu da dahil)
+    premiums: tuple[tuple[tuple[str, ...], int], ...] = ()   # (başlık sözcükleri, TL): geçerse referansa eklenir
+
+    def expected(self, data: dict) -> float | None:
+        km = data.get("km") or 0
+        pts = [((lo + hi) / 2, (plo + phi) / 2) for lo, hi, plo, phi in self.bands]
+        if not km or km < self.bands[0][0] - 40_000 or km > self.bands[-1][1] + 40_000 or len(pts) < 2:
+            return None   # bantların çok dışında: model fikir vermez
+        if km <= pts[0][0]:
+            (x0, y0), (x1, y1) = pts[0], pts[1]
+        elif km >= pts[-1][0]:
+            (x0, y0), (x1, y1) = pts[-2], pts[-1]
+        else:
+            i = next(i for i in range(len(pts) - 1) if pts[i][0] <= km <= pts[i + 1][0])
+            (x0, y0), (x1, y1) = pts[i], pts[i + 1]
+        base = y0 + (y1 - y0) * (km - x0) / (x1 - x0)
+        year = data.get("year") or self.ref_year
+        base *= 1 + max(-0.15, min(0.15, self.year_pct / 100.0 * (year - self.ref_year)))
+        base -= self.paint_part_tl * len(data.get("paint_parts") or [])
+        city = fold(data.get("city") or "")
+        if city in EAST:
+            base -= max(self.east_tl, self.nonmetro_tl)
+        elif city and city not in METRO:
+            base -= self.nonmetro_tl
+        title = fold(data.get("title") or "")
+        for words, tl in self.premiums:
+            if any(w in title for w in words):
+                base += tl
+        return base
+
+
 @dataclass(frozen=True)
 class Rule:
     brand: str
@@ -45,6 +91,8 @@ class Rule:
     max_tramer_tl: int | None = None
     baseline: float | None = None    # galericinin piyasa ortalaması (yalnız mesajda kıyas için)
     market_min_profit_tl: int | None = None  # emsal kıyasında bu kurala özel TL tabanı (yoksa galerici düzeyindeki değer)
+    price_model: PriceModel | None = None    # varsa bu kurala uyan ilanda fiyat kararı galericinin bantlarıyla verilir
+    exclude_words: tuple[str, ...] = ()      # başlıkta geçerse kural uymaz (örn. sedan kuralında "variant")
 
     def label(self) -> str:
         return f"{self.brand} {self.model}".strip()
@@ -58,6 +106,8 @@ class Rule:
             haystack = tokens(f"{data.get('model', '')} {data.get('trim', '')} {title}")
             if not tokens(self.model) <= haystack:
                 return False
+        if self.exclude_words and any(w in fold(title) for w in self.exclude_words):
+            return False
         year = data.get("year") or 0
         if self.year_min and year < self.year_min:
             return False
@@ -159,6 +209,17 @@ def _num(value, field_name: str, ctx: str) -> float | None:
         raise DealerConfigError(f"{ctx}: '{field_name}' sayı olmalı (gelen: {value!r})")
 
 
+def _price_model(raw: dict | None) -> PriceModel | None:
+    if not raw:
+        return None
+    bands = tuple(sorted((int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in raw["bands"]))
+    return PriceModel(
+        ref_year=int(raw["ref_year"]), bands=bands, year_pct=float(raw.get("year_pct", 3.5)),
+        paint_part_tl=int(raw.get("paint_part_tl", 0)), east_tl=int(raw.get("east_tl", 0)),
+        nonmetro_tl=int(raw.get("nonmetro_tl", 0)),
+        premiums=tuple((tuple(fold(w) for w in p["words"]), int(p["tl"])) for p in raw.get("premiums", [])))
+
+
 def parse_dealers(raw: dict | list) -> list[Dealer]:
     items = raw.get("dealers") if isinstance(raw, dict) else raw
     if not isinstance(items, list):
@@ -207,6 +268,8 @@ def parse_dealers(raw: dict | list) -> list[Dealer]:
                 max_tramer_tl=int(r["max_tramer_tl"]) if r.get("max_tramer_tl") is not None else None,
                 baseline=baseline,
                 market_min_profit_tl=int(r["market_min_profit_tl"]) if r.get("market_min_profit_tl") else None,
+                price_model=_price_model(r.get("price_model")),
+                exclude_words=tuple(fold(x) for x in (r.get("exclude_words") or [])),
             ))
         if not rules:
             raise DealerConfigError(f"{ctx}: en az bir kural gerekli")
@@ -304,6 +367,14 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
                 floor = min(floors) if floors else dealer.market_min_profit_tl
                 market_hit = discount_pct(price, est.average) >= dealer.market_discount_pct and                     est.average - price >= floor and (not p25 or price <= p25)
 
+        model_note = ""
+        applicable = [(r, e) for r in matched if r.price_model and (e := r.price_model.expected(data)) is not None]
+        if applicable:
+            rule, expected = max(applicable, key=lambda t: t[1] - price)
+            floors = rule.market_min_profit_tl or dealer.market_min_profit_tl
+            gap = expected - price
+            market_hit = gap >= floors and (not p25 or price <= p25)   # galerici bandı karar verir, emsal alt çeyreği veto eder
+            model_note = f"📐 Galerici fiyat modeli: referans {fmt_tl(expected)} TL (km, yıl, boya, bölge, donanım düzeltmeli) → ilan {fmt_tl(abs(gap))} TL {'altında' if gap >= 0 else 'üstünde'}"
         if not target_hits and not market_hit and not urgent:
             continue
 
@@ -314,6 +385,8 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
             if r.baseline:
                 lines.append(f"📐 Baz fiyat {fmt_tl(r.baseline)} TL → ilan %{fmt_pct(discount_pct(price, r.baseline))} altında")
             reasons.append(f"hedef {r.label()} ≤ {fmt_tl(r.max_price)}")
+        if model_note:
+            lines.append(model_note)
         if urgent:
             lines.append(f"🚨 Başlıkta \"{urgent}\" geçiyor: satıcı acil satmak istiyor, pazarlık payı olabilir.")
             reasons.append(f"acil: {urgent}")
