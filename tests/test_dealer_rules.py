@@ -67,6 +67,10 @@ class RuleTests(unittest.TestCase):
     def test_target_price_from_baseline_and_discount(self):
         self.assertEqual(self.rule.max_price, 1620000 * 0.9)
 
+    def test_target_price_from_tl_profit(self):
+        raw = {"id": "d", "chat_id": "1", "rules": [dict(RULE["rules"][0], min_profit_tl=100000, min_discount_pct=5)]}
+        self.assertEqual(parse_dealers([raw])[0].rules[0].max_price, 1620000 - 100000)   # TL kârı yüzdeden önce gelir
+
     def test_matching_car(self):
         self.assertTrue(self.rule.matches(car()))
 

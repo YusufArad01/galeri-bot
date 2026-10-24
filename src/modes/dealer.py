@@ -167,8 +167,10 @@ def parse_dealers(raw: dict | list) -> list[Dealer]:
                 raise DealerConfigError(f"{rctx}: 'brand' zorunlu")
             max_price = _num(r.get("max_price"), "max_price", rctx)
             baseline = _num(r.get("baseline"), "baseline", rctx)
-            if max_price is None and baseline is not None:   # hedef = baz fiyatın yüzde X altı (varsayılan: baz fiyatın kendisi)
-                max_price = baseline * (1 - (_num(r.get("min_discount_pct"), "min_discount_pct", rctx) or 0.0) / 100.0)
+            if max_price is None and baseline is not None:
+                # hedef = baz fiyattan en az X TL aşağısı (min_profit_tl) ya da yüzde X altı (min_discount_pct); ikisi de yoksa baz fiyatın kendisi
+                profit = _num(r.get("min_profit_tl"), "min_profit_tl", rctx)
+                max_price = baseline - profit if profit else                     baseline * (1 - (_num(r.get("min_discount_pct"), "min_discount_pct", rctx) or 0.0) / 100.0)
             if max_price is None and not market_check:
                 raise DealerConfigError(f"{rctx}: 'max_price' yok ve galericide market_check kapalı; kural hiçbir şey yakalamaz")
             rules.append(Rule(
