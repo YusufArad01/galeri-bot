@@ -310,6 +310,20 @@ class DealerMarketProfitTests(PipelineBase):
         self.assertEqual((len(self.sent), st.deferred, self.pplx_calls), (0, 0, 0))
 
 
+class LowerQuartileTests(PipelineBase):
+    DEALER = DealerMarketProfitTests.DEALER
+
+    async def test_two_cluster_market_needs_cheap_quartile(self):
+        # 6 ucuz (1.000.000) + 6 pahalı (1.400.000) ilan: ortanca 1.200.000, ilan 1.050.000 ortancadan 150 bin ucuz
+        # ama ucuz kümenin içinde sıradan: fırsat değil. 950.000 ise gerçekten ucuz çeyrekte: gider.
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 7)] + [row(i, 1_400_000) for i in range(7, 13)]
+        FakeScraper.pages[self.URL] = [listing(1, 1_050_000), listing(2, 950_000)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("dealer",), dealers=parse_dealers(self.DEALER), bench_cfg=BenchConfig(min_comparables=10))
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("950.000 TL", self.sent[0]["text"])
+
+
 class DealerUrgentTests(PipelineBase):
     DEALER = {"dealers": [{"id": "d", "chat_id": "42", "market_check": True, "market_discount_pct": 5,
                            "market_min_profit_tl": 100_000, "perplexity_fallback": False,

@@ -279,6 +279,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
 
         urgent = urgent_hit(data.get("title", ""), dealer.urgent_words)
         est: PriceEstimate | None = None
+        p25 = 0.0
         source = ""   # piyasa değerinin kaynağı: karşılaştırma düzeyi ya da "tahmin"
         market_hit = False
         market_err: PriceServiceError | None = None
@@ -287,6 +288,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
                 res = await bench.stats(data) if bench is not None else None
                 if res is not None:
                     est = PriceEstimate(res.median, None, None, "benchmark")
+                    p25 = res.p25
                     source = f"{res.level} {res.comparables} güncel ilanın ortası"
                 elif dealer.perplexity_fallback:
                     est = await prices.estimate(data["brand"], data["model"], data.get("trim", ""),
@@ -300,7 +302,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
             if est and est.average > 0:
                 floors = [r.market_min_profit_tl for r in matched if r.market_min_profit_tl is not None]
                 floor = min(floors) if floors else dealer.market_min_profit_tl
-                market_hit = discount_pct(price, est.average) >= dealer.market_discount_pct and                     est.average - price >= floor
+                market_hit = discount_pct(price, est.average) >= dealer.market_discount_pct and                     est.average - price >= floor and (not p25 or price <= p25)
 
         if not target_hits and not market_hit and not urgent:
             continue

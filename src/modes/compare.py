@@ -70,6 +70,8 @@ async def evaluate(data: dict, bench: Benchmark, max_km: int = 0, min_year: int 
     res = await bench.stats(data)
     if res is None:
         return None
+    if res.p25 and price > res.p25:   # ortancadan ucuz görünse de emsallerin en ucuz çeyreğinde değilse fırsat sayılmaz (çift tepeli fiyat dağılımı)
+        return None
     raw = discount_pct(price, res.median)
     penalty = PENALTY_PER_DEGISEN * (data.get("degisen") or 0) + PENALTY_PER_BOYALI * (data.get("boyali") or 0)
     return Entry(data, res.median, res.comparables, res.level, raw - penalty, raw)

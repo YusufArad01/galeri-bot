@@ -50,6 +50,7 @@ class BenchResult:
     comparables: int
     level: str
     url: str
+    p25: float = 0.0   # emsallerin en ucuz çeyreğinin sınırı (km/yıl düzeltmeli); 0 = bilinmiyor
 
 
 def filtered_url(url: str, year: int, km: int, year_tol: int, km_pct: float) -> str:
@@ -61,6 +62,14 @@ def filtered_url(url: str, year: int, km: int, year_tol: int, km_pct: float) -> 
         span = max(km * km_pct / 100.0, 15_000)
         q += f"&minkm={max(0, int((km - span) // 10_000) * 10_000)}&maxkm={math.ceil((km + span) / 10_000) * 10_000}"
     return url + ("&" if "?" in url else "?") + q
+
+
+def _quantile(values: list[float], q: float) -> float:
+    vals = sorted(values)
+    pos = (len(vals) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(vals) - 1)
+    return vals[lo] + (vals[hi] - vals[lo]) * (pos - lo)
 
 
 def _km_close(a: int, b: int, pct: float) -> bool:
@@ -132,5 +141,5 @@ class Benchmark:
                 and _km_close(km, r["km"], self.cfg.km_tolerance_pct)
             ]
             if len(comps) >= self.cfg.min_comparables:
-                return BenchResult(float(statistics.median(comps)), len(comps), level, url)
+                return BenchResult(float(statistics.median(comps)), len(comps), level, url, _quantile(comps, 0.25))
         return None
