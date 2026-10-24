@@ -142,15 +142,20 @@ async def main():
         health = Health(session, telegram, settings.admin_chat, settings.HEARTBEAT_HOURS, settings.BLOCKED_CYCLES_ALERT)
         await health.startup(describe_mode(dealers))
 
+    blocked_streak = 0
     while True:
         if "dealer" in settings.modes:
             dealers, dealer_error = load_dealers_safe(dealers)
+        stats = None
         try:
-            await one_cycle(telegram, dealers, dealer_error)
+            stats = await one_cycle(telegram, dealers, dealer_error)
         except Exception as exc:  # son çare: döngü ne olursa olsun devam etsin
             logger.exception(f"Unhandled error outside cycle: {exc}")
-        logger.info(f"Cycle finished. Waiting for {settings.SCRAPE_INTERVAL_MINUTES} minutes before the next run...")
-        await asyncio.sleep(settings.SCRAPE_INTERVAL_MINUTES * 60)
+        # Engel varsa sıklaştırmak engeli uzatır: 15, 30, 60, en çok 120 dk bekle (engel kalkınca normal aralığa döner)
+        blocked_streak = blocked_streak + 1 if stats is not None and stats.blocked and not stats.scraped else 0
+        wait = min(120, 15 * 2 ** (blocked_streak - 1)) if blocked_streak else settings.SCRAPE_INTERVAL_MINUTES
+        logger.info(f"Cycle finished. Waiting for {wait} minutes before the next run...")
+        await asyncio.sleep(wait * 60)
 
 
 if __name__ == "__main__":

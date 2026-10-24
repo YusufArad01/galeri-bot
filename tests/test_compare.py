@@ -412,6 +412,15 @@ class DeepPageTests(PipelineBase):
         self.assertEqual(len(FakeScraper.category_fetches), 2)
 
 
+class BlockedFailFastTests(PipelineBase):
+    async def test_blocked_site_stops_requesting_remaining_pages(self):
+        FakeScraper.blocked = True
+        async with self.Session() as s:
+            st = await self.cycle(s, targets=[self.URL, self.URL + "&page=2", self.URL + "&page=3"])
+        self.assertTrue(st.blocked)
+        self.assertEqual(len(FakeScraper.category_fetches), 1)
+
+
 class StrictQualityTests(PipelineBase):
     CFG = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, release_minutes=0)
 

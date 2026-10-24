@@ -202,6 +202,9 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                 stats.blocked = stats.blocked or getattr(scraper, "last_blocked", False)
                 if not got:
                     stats.block_note = getattr(scraper, "last_block_note", "") or stats.block_note
+                    if getattr(scraper, "last_blocked", False):
+                        logger.warning("Site engelledi (Cloudflare): kalan sayfalar bu turda istenmiyor.")
+                        break   # engelliyken kalan sayfalara istek atmak engeli uzatır ve turu zaman aşımına sokar
                 links.extend(got)
             links = list(dict.fromkeys(links))
 
