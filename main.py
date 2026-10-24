@@ -9,7 +9,7 @@ from src.modes import dealer as dealer_mode
 from src.benchmark import BenchConfig
 from src.modes.compare import CompareConfig
 from src.notifications import Telegram
-from src.pipeline import build_targets, run_cycle
+from src.pipeline import build_targets, forget_known, run_cycle
 from src.pricing.perplexity import PriceService
 from src.proxy.manager import ProxyManager
 from src.scraper.engine import ScraperEngine
@@ -126,6 +126,9 @@ async def main():
     logger.info(f"Starting Arbitrage Engine (mode={settings.BOT_MODE})...")
     settings.modes  # geçersiz BOT_MODE'u başlangıçta yakala
     await init_db()
+    if settings.RESCAN_LISTINGS:
+        async with AsyncSessionLocal() as session:
+            await forget_known(session, settings.RESCAN_LISTINGS)
 
     telegram = Telegram(settings.TELEGRAM_BOT_TOKEN)
     if not telegram.configured or not settings.TELEGRAM_CHAT_ID:

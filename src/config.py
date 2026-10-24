@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     SCRAPE_INTERVAL_MINUTES: int = 30
     CYCLE_TIMEOUT_MINUTES: int = 40
     MAX_LISTINGS_PER_CYCLE: int = 40
+    RESCAN_LISTINGS: str = ""        # örn. "Passat,Golf": bu sözcükleri içeren bilinen ilanları bir kez unut (kurallar değişince yeniden bakılsın)
     DEALER_PAGES: int = 5              # galerici arama sayfalarının kaç sayfası taransın (mevcut stoğu topluca görmek için derin)
     PAGES_PER_TARGET: int = 2          # liste sayfasının kaç sayfası taransın (sayfa başı ~20 ilan)
     JITTER_MIN_SECONDS: float = 3.0

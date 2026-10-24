@@ -8,11 +8,11 @@ from datetime import datetime
 from typing import Callable
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.health import CycleStats
-from src.models.domain import Listing
+from src.models.domain import BotState, Listing
 from src.modes import dealer as dealer_mode
 from src.modes import compare as compare_mode
 from src.benchmark import BenchConfig, Benchmark
@@ -65,6 +65,23 @@ def listing_row(data: dict) -> dict:
     row["city"] = row.get("city") or "Bilinmiyor"
     row["description"] = row.get("description") or ""
     return row
+
+
+async def forget_known(session: AsyncSession, raw: str) -> int:
+    """Bir kez çalışır: başlığında verilen sözcüklerden (virgülle) biri geçen bilinen ilanları unutur ki yeni galerici
+    kurallarıyla yeniden değerlendirilsin. Aynı `raw` değeri ikinci kez silme yapmaz (BotState'te işaretlenir)."""
+    terms = [t.strip() for t in raw.split(",") if t.strip()]
+    key = f"rescan:{raw.strip()}"
+    if not terms or await session.get(BotState, key):
+        return 0
+    removed = 0
+    for term in terms:
+        res = await session.execute(delete(Listing).where(Listing.title.ilike(f"%{term}%")))
+        removed += res.rowcount or 0
+    session.add(BotState(key=key, value="done"))
+    await session.commit()
+    logger.info(f"Yeniden değerlendirme için {removed} bilinen ilan unutuldu ({raw}).")
+    return removed
 
 
 async def known_ids(session: AsyncSession, ids: list[str]) -> set[str]:

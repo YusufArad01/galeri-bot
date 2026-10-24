@@ -135,6 +135,21 @@ class DealerHoldTests(PipelineBase):
             self.assertEqual(self.sent[0]["chat_id"], "42")
 
 
+class ForgetKnownTests(PipelineBase):
+    async def test_forgets_matching_listings_only_once(self):
+        from src.models.domain import Listing
+        from src.pipeline import forget_known, listing_row
+        async with self.Session() as s:
+            s.add(Listing(**listing_row(pipeline_car(1, 800_000))))                                   # Megane
+            s.add(Listing(**listing_row(pipeline_car(2, 800_000, title="Volkswagen Golf 1.6", brand="Volkswagen", model="Golf"))))
+            await s.commit()
+            self.assertEqual(await forget_known(s, "Golf"), 1)
+            s.add(Listing(**listing_row(pipeline_car(3, 800_000, title="Volkswagen Golf 1.4", brand="Volkswagen", model="Golf"))))
+            await s.commit()
+            self.assertEqual(await forget_known(s, "Golf"), 0)                                        # aynı değer ikinci kez silmez
+            self.assertEqual(await self.count(s, Listing), 2)
+
+
 class DealerHoursTests(unittest.TestCase):
     def test_hours_are_turkey_time(self):
         from datetime import datetime
