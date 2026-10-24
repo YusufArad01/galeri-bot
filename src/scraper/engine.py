@@ -74,7 +74,7 @@ LISTING_JS = r'''() => {
     // marka > seri > motor > donanım sayfalarına giden göreli bağlantılar (aynı modelin güncel ilanları orada)
     const crumbs = Array.from(document.querySelectorAll('a[href^="/ikinci-el/otomobil/"]')).map(a => a.getAttribute('href'));
     const location = text(document.querySelector('.product-location'));  // "Mahalle, İlçe, İl"
-    return { title, priceText, description, props, breadcrumbs, crumbs, location };
+    return { title, priceText, description, props, breadcrumbs, crumbs, location, body: document.body.innerText || '' };
 }'''
 
 LINKS_JS = r'''() => {
@@ -346,6 +346,7 @@ class ScraperEngine:
                     description=raw["description"], props=raw["props"], breadcrumbs=raw["breadcrumbs"],
                     max_degisen=settings.MAX_DEGISEN, max_boyali=settings.MAX_BOYALI,
                     crumbs=raw.get("crumbs") or [], location=raw.get("location") or "",
+                    body=raw.get("body") or "",
                 )
                 if proxy:
                     await self.proxy_manager.mark_success(proxy.id)

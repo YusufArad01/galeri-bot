@@ -224,10 +224,64 @@ def parse_listing_fields(props: dict[str, str], title: str, breadcrumbs: list[st
     }
 
 
+_PART_GROUPS = {"lokal boyali": "lokal", "boyali": "boyali", "degismis": "degisen", "belirtilmemis": "belirsiz"}
+
+
+def parse_expertise(body: str | None) -> dict:
+    """Detay sayfası metninden parça parça boya/değişen listesi, tramer tutarı ve şanzıman.
+    Bölüm sayfada yoksa ilgili alanlar None kalır (bilinmiyor): kural koyan galerici için "doğrulanamadı" demektir."""
+    out: dict = {"paint_parts": None, "changed_parts": None, "tramer_tl": None, "gearbox": None}
+    lines = [ln.strip() for ln in (body or "").splitlines() if ln.strip()]
+    folded = [fold(ln) for ln in lines]
+    for i, f in enumerate(folded):
+        if f == "sanziman" and i + 1 < len(lines) and out["gearbox"] is None:
+            out["gearbox"] = lines[i + 1]
+    # alt başlık "Orjinal" (açıklama satırındaki "Orijinal" değil): ardından grup grup parça adları gelir
+    start = next((i for i, f in enumerate(folded) if f == "orjinal"), None)
+    if start is None:
+        return out
+    groups: dict[str, list[str]] = {"original": [], "lokal": [], "boyali": [], "degisen": [], "belirsiz": []}
+    cur = "original"
+    for ln, f in zip(lines[start + 1:], folded[start + 1:]):
+        if f.startswith("tramer"):
+            digits = re.sub(r"[^\d]", "", ln)
+            out["tramer_tl"] = 0 if "yok" in f else (int(digits) if digits else None)
+            break
+        if f in _PART_GROUPS:
+            cur = _PART_GROUPS[f]
+        elif ln != "-":
+            groups[cur].append(ln)
+    out["paint_parts"] = groups["lokal"] + groups["boyali"]
+    out["changed_parts"] = groups["degisen"]
+    return out
+
+
+def tramer_from_text(text: str | None) -> int | None:
+    """Açıklamadan tramer tutarı: 'tramersiz', 'tramer kaydı yoktur' -> 0; 'tramer 2 bin TL', 'tramer 8.500' -> tutar.
+    Belirsizse None (ilan sahibi yazmamış ya da anlaşılamadı)."""
+    f = fold(text)
+    if re.search(r"tramersiz|tramer\s+(?:kaydi\s+)?(?:yok|yoktur|sifir)|tramer\s+kaydi\s+bulunma", f):
+        return 0
+    m = re.search(r"tramer\W{0,3}(\d{1,3}(?:\.\d{3})+|\d+)(?:[.,]\d+)?\s*(bin|k\b)?", f)
+    if not m:
+        return None
+    value = int(m.group(1).replace(".", ""))
+    if m.group(2):
+        value *= 1000
+    return value if value >= 1000 else None
+
+
+def _with_tramer_fallback(exp: dict, text: str) -> dict:
+    """Yapısal 'Tramer tutarı belirtilmemiş' ise açıklamadaki tutara bakar."""
+    if exp.get("tramer_tl") is None:
+        exp["tramer_tl"] = tramer_from_text(text)
+    return exp
+
+
 def build_listing(url: str, title: str, price_text: str, description: str,
                   props: dict[str, str], breadcrumbs: list[str] | None = None,
                   max_degisen: int = 2, max_boyali: int = 4, crumbs: list[str] | None = None,
-                  location: str = "") -> dict:
+                  location: str = "", body: str = "") -> dict:
     """Ham DOM verisinden pipeline'ın beklediği ilan sözlüğünü üretir."""
     price = parse_tl(price_text)
     fields = parse_listing_fields(props, title, breadcrumbs, location)
@@ -253,6 +307,8 @@ def build_listing(url: str, title: str, price_text: str, description: str,
         "is_old_cheap": old_cheap,
         "is_disqualified": dmg.heavy or old_cheap,
         "bench_urls": bench_urls_from_crumbs(crumbs or []),
+        **_with_tramer_fallback(parse_expertise(body), f"{title} {description}"),
+        "vites": props.get("vites tipi", ""),
     }
 
 
