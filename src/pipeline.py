@@ -29,6 +29,9 @@ _SCRAPE_FAILS: dict[str, int] = {}
 # Boş çıkan 2. ve sonraki sayfa (ilan sayısı o kadar sayfaya yetmiyor) 30 dk boyunca yeniden istenmez: boşuna istek/yeniden deneme olmasın.
 _EMPTY_PAGES: dict[str, float] = {}
 _EMPTY_PAGE_TTL = 1800
+# 3. ve sonraki sayfalar derin tarama içindir (mevcut stoğu bir kez görmek); yeni ilanlar listenin başına düşer,
+# bu yüzden bu sayfalar 6 saatte bir yenilenir. Çok kuralı olan galericide sayfa isteği sayısını ~yarıya indirir.
+_DEEP_PAGE_TTL = 6 * 3600
 _MAX_SCRAPE_FAILS = 3
 
 
@@ -169,8 +172,12 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                     continue
                 logger.info(f"Fetching category links from: {url}")
                 got = await scraper.fetch_category_links(url)
-                if not got and "&page=" in url and not getattr(scraper, "last_blocked", False):
-                    _EMPTY_PAGES[url] = time.monotonic() + _EMPTY_PAGE_TTL
+                if "&page=" in url and not getattr(scraper, "last_blocked", False):
+                    page_no = int(url.rsplit("&page=", 1)[1].split("&")[0] or 1)
+                    if not got:
+                        _EMPTY_PAGES[url] = time.monotonic() + _EMPTY_PAGE_TTL
+                    elif page_no >= 3:
+                        _EMPTY_PAGES[url] = time.monotonic() + _DEEP_PAGE_TTL
                 logger.info(f"Found {len(got)} listings on {url}")
                 stats.links_found += len(got)
                 stats.blocked = stats.blocked or getattr(scraper, "last_blocked", False)

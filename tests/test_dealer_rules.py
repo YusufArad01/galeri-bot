@@ -85,6 +85,32 @@ class RuleTests(unittest.TestCase):
             self.assertFalse(self.rule.matches(bad), bad)
 
 
+class AlternativesTests(unittest.TestCase):
+    RULE2 = {"id": "v", "chat_id": "1", "rules": [{
+        "brand": "Volkswagen", "model": "Passat", "year_min": 2015, "year_max": 2019,
+        "engine": "1.6 TDI|1.4 TSI", "trim": "Comfortline|Highline", "gearbox": "DSG",
+        "km_per_year_max": 20000, "max_degisen": 0, "max_boyali": 2, "forbidden_parts": ["tavan", "kaput"],
+        "baseline": 1680000, "min_discount_pct": 5}]}
+
+    def setUp(self):
+        self.rule = parse_dealers([self.RULE2])[0].rules[0]
+
+    def test_engine_and_trim_alternatives(self):
+        ok = car(year=2017, km=100000, trim="1.4 TSI BlueMotion Highline",
+                 title="Volkswagen Passat 1.4 TSI BlueMotion Highline 2017 Model", paint_parts=[])
+        self.assertTrue(self.rule.matches(ok))
+        self.assertFalse(self.rule.matches(dict(ok, trim="1.5 TSI Elegance", title="Volkswagen Passat 1.5 TSI Elegance 2017 Model")))
+        self.assertFalse(self.rule.matches(dict(ok, trim="1.4 TSI BlueMotion Trendline", title="Volkswagen Passat 1.4 TSI Trendline 2017 Model")))
+
+    def test_km_per_year_and_forbidden_parts(self):
+        ok = car(year=2017, km=100000, paint_parts=[])
+        self.assertTrue(self.rule.matches(ok))
+        self.assertFalse(self.rule.matches(dict(ok, km=250000)))                      # 9 yıl x 20 bin = 180 bin üstü
+        self.assertFalse(self.rule.matches(dict(ok, paint_parts=["Tavan"])))
+        self.assertFalse(self.rule.matches(dict(ok, changed_parts=["Motor Kaputu"])))  # değişen > 0 zaten eler
+        self.assertFalse(self.rule.matches(dict(ok, paint_parts=["Arka Kaput"])))
+
+
 class TramerTextTests(unittest.TestCase):
     def test_description_tramer(self):
         self.assertEqual(tramer_from_text("TRAMER 2Bin TL, bakımları yapıldı"), 2000)

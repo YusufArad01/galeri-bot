@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
@@ -32,8 +33,10 @@ class Rule:
     max_price: float | None = None
     search_url: str | None = None
     km_min: int | None = None
-    engine: str = ""                 # örn. "1.6 TDI": kelimelerin hepsi donanım/başlıkta geçmeli
-    trim: str = ""                   # örn. "Comfortline"
+    engine: str = ""                 # örn. "1.6 TDI" ya da seçenekli "1.6 TDI|1.4 TSI": seçeneklerden birinin kelimeleri başlıkta geçmeli
+    trim: str = ""                   # örn. "Comfortline" ya da "Comfortline|Highline"
+    km_per_year_max: int | None = None   # örn. 20000: km <= 20000 x araç yaşı (en az 1 yıl)
+    forbidden_parts: tuple[str, ...] = ()  # boya ya da değişen parça adlarında bu sözcük geçerse elenir (örn. "tavan")
     gearbox: str = ""                # örn. "DSG"
     max_degisen: int | None = None   # parça parça ekspertiz; bölüm ilanda yoksa kural karşılanamaz
     max_boyali: int | None = None    # lokal boyalı + boyalı toplamı
@@ -65,7 +68,10 @@ class Rule:
             return False
         head = tokens(f"{data.get('trim', '')} {title}")
         for need in (self.engine, self.trim):
-            if need and not tokens(need) <= head:
+            if need and not any(tokens(alt) <= head for alt in need.split("|")):
+                return False
+        if self.km_per_year_max and km and data.get("year"):
+            if km > self.km_per_year_max * max(1, datetime.now().year - data["year"]):
                 return False
         if self.gearbox:
             want = fold(self.gearbox)
@@ -80,7 +86,7 @@ class Rule:
             changed = data.get("changed_parts")
             if changed is None or len(changed) > self.max_degisen:
                 return False
-        wants_paint = self.max_boyali is not None or self.allowed_paint_parts
+        wants_paint = self.max_boyali is not None or self.allowed_paint_parts or self.forbidden_parts
         if wants_paint:
             paint = data.get("paint_parts")
             if paint is None:
@@ -89,6 +95,9 @@ class Rule:
                 return False
             if self.allowed_paint_parts and not all(
                     any(w in fold(p) for w in self.allowed_paint_parts) for p in paint):
+                return False
+            if self.forbidden_parts and any(
+                    w in fold(p) for p in paint + (data.get("changed_parts") or []) for w in self.forbidden_parts):
                 return False
         if self.max_tramer_tl is not None:
             tramer = data.get("tramer_tl")   # None = ilanda belirtilmemiş: elenmez, mesajda uyarı çıkar (satıcıya sorulur)
@@ -177,6 +186,8 @@ def parse_dealers(raw: dict | list) -> list[Dealer]:
                 max_degisen=int(r["max_degisen"]) if r.get("max_degisen") is not None else None,
                 max_boyali=int(r["max_boyali"]) if r.get("max_boyali") is not None else None,
                 allowed_paint_parts=tuple(fold(x) for x in (r.get("allowed_paint_parts") or [])),
+                forbidden_parts=tuple(fold(x) for x in (r.get("forbidden_parts") or [])),
+                km_per_year_max=int(r["km_per_year_max"]) if r.get("km_per_year_max") else None,
                 max_tramer_tl=int(r["max_tramer_tl"]) if r.get("max_tramer_tl") is not None else None,
                 baseline=baseline,
             ))
