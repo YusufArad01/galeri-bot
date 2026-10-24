@@ -1,33 +1,47 @@
 {
   "dealers": [
     {
-      "id": "ahmet-oto",
-      "name": "Ahmet Oto Galeri",
+      "id": "ornek-galeri",
+      "name": "Örnek Oto Galeri",
       "chat_id": "123456789",
       "market_check": true,
-      "market_discount_pct": 15,
+      "market_discount_pct": 3,
+      "market_min_profit_tl": 100000,
       "allow_damaged": false,
+      "urgent_words": [
+        "acil",
+        "kelepir"
+      ],
+      "blacklist": [
+        "pert kaydı",
+        "çekme belgeli"
+      ],
       "rules": [
         {
-          "brand": "Mercedes-Benz",
-          "model": "C 200",
-          "year_min": 2016,
-          "year_max": 2020,
-          "km_max": 150000,
-          "max_price": 1450000,
-          "search_url": "https://www.arabam.com/ikinci-el/otomobil/mercedes-benz-c-serisi"
+          "brand": "Volkswagen",
+          "model": "Passat",
+          "year_min": 2015,
+          "year_max": 2017,
+          "engine": "1.6 TDI",
+          "trim": "Comfortline|Highline",
+          "gearbox": "DSG",
+          "max_degisen": 0,
+          "max_boyali": 2,
+          "allowed_paint_parts": [
+            "çamurluk",
+            "kapı"
+          ],
+          "forbidden_parts": [
+            "tavan"
+          ],
+          "max_tramer_tl": 10000,
+          "search_url": "https://www.arabam.com/ikinci-el/otomobil/volkswagen-passat?minYear=2015&maxYear=2017"
         },
-        { "brand": "Mercedes-Benz", "model": "E 180", "max_price": 1900000 },
-        { "brand": "BMW", "model": "3.20", "year_min": 2015 }
-      ]
-    },
-    {
-      "id": "mehmet-galeri",
-      "name": "Mehmet Galeri",
-      "chat_id": "987654321",
-      "rules": [
-        { "brand": "Fiat", "model": "Egea", "max_price": 700000 },
-        { "brand": "Renault", "model": "Clio", "year_min": 2018, "max_price": 750000 }
+        {
+          "brand": "Fiat",
+          "model": "Egea",
+          "max_price": 700000
+        }
       ]
     }
   ]

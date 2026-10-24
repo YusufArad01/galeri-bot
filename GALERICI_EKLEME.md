@@ -2,22 +2,27 @@
 
 Her galerici için 4 adım, yaklaşık 15 dakika.
 
-1. **Galerici bota yazar.** Telegram'da botu açıp "merhaba" yazar.
-2. **Telegram numarasını bul.**
-   `TELEGRAM_BOT_TOKEN=... python chat_id_bul.py` → galericinin numarası ve adı listelenir.
-3. **Formu doldur.** `galerici_formu_ornek.json` dosyasını kopyala, galericinin söylediklerini yaz.
-4. **Profile çevir ve yükle.**
+1. **Galerici bota yazar.** Telegram'da botu açıp `/start` yazar. Bot ona sohbet numarasını söyler, **sana da**
+   "👤 Yeni /start: ad (@kullanıcı) chat_id=123456" diye bildirir. Numarayı oradan al.
+2. **Formu doldur.** `galerici_formu_ornek.json` dosyasını kopyala, galericinin söylediklerini yaz
+   (`telegram` alanına numara).
+3. **Profile çevir.**
    ```bash
-   python galerici_ekle.py galerici_form.json            # dealers.json'a ekler, özet yazar
-   python galerici_ekle.py galerici_form.json --railway  # canlıya yükler (bot yeniden başlar)
+   python galerici_ekle.py galerici_form.json            # dealers.json'a ekler/günceller, özet yazar
    ```
-   Yüklemeden önce özeti kontrol et. Canlıya yüklemek mesajları anında değiştirir.
+   Özet kaç kural ve kaç farklı arama sayfası olduğunu söyler. Hatalı form burada yakalanır.
+4. **Canlıya yükle** (bot yeniden başlar, bekleme sayacı sıfırlanır; engel sürerken yapma):
+   ```bash
+   python galerici_ekle.py galerici_form.json --railway
+   ```
+   Ardından eski ilanların yeni kurallarla yeniden değerlendirilmesini istiyorsan Railway'de
+   `RESCAN_LISTINGS` değişkenine o markanın adını (ör. `Passat,Golf,v1`) yaz; değeri her değiştirişinde bir kez çalışır.
 
 ## Form alanları (her kural için)
 
 | Alan | Ne demek | Örnek |
 |---|---|---|
-| `marka`, `model` | Marka ve model (zorunlu: marka) | Volkswagen, Passat |
+| `marka`, `model` | Marka (zorunlu), model | Volkswagen, Passat |
 | `yil` | Model yılı aralığı | [2015, 2017] |
 | `motor`, `donanim` | Seçenekler `\|` ile ayrılır | "1.6 TDI\|1.4 TSI", "Comfortline\|Highline" |
 | `vites` | DSG yazılırsa "yarı otomatik" de kabul edilir | "DSG" |
@@ -35,10 +40,12 @@ Her galerici için 4 adım, yaklaşık 15 dakika.
 `buyuksehir_disi_dusus_tl` büyükşehir dışı indirim, `primler` başlıkta geçen sözcüğe göre eklenen TL.
 
 ## Her galericide otomatik olanlar
-- Mesajlar yalnız 08:00–23:00 arasında gider.
+- Mesajlar yalnız 08:00–23:00 arasında gider; her mesajın altında 👍/👎 düğmesi var, 22:00'de kısa günlük özet gelir.
 - Başlığında "acil", "kelepir" geçen ve kurallara uyan ilan fiyat şartı aranmadan gider.
 - Kara liste kelimeleri (pert kaydı, çekme belgeli...) ilanı eler.
 - İlan emsallerin en ucuz çeyreğinde değilse fırsat sayılmaz.
+- Mesajda ilan sayfasında telefon varsa 📞 satırı çıkar; yoksa yalnız link gider.
+- Galerici botu başlatmamışsa (Telegram reddederse) sana uyarı gelir.
 
 ## Kapasite
 Her farklı arama sayfası tur başına yaklaşık 2 liste isteği demektir. Tek proxy ile **en çok 10 farklı arama sayfası**

@@ -22,7 +22,6 @@ RUN (apt-get update \
 # Copy the requirements file and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir requests
 
 # Copy the rest of the project codebase
 COPY . .

@@ -278,6 +278,20 @@ def _with_tramer_fallback(exp: dict, text: str) -> dict:
     return exp
 
 
+_PHONE_RE = re.compile(r"(?<!\d)0[\s.]?(?:5\d{2}|[2-4]\d{2})[\s.]?\d{3}[\s.]?\d{2}[\s.]?\d{2}(?!\d)")
+
+
+def phone_from_body(body: str | None) -> str:
+    """Satıcı/ilan açıklaması bölümündeki ilk telefon numarası ("0 507 257 83 99" -> "0507 257 83 99"); yoksa boş.
+    Yalnız 'Boya, Değişen ve Tramer' başlığından ÖNCEKİ metne bakılır: alt bilgideki arabam numaraları karışmasın."""
+    head = (body or "").split("Boya, Değişen ve Tramer")[0][:8000]
+    m = _PHONE_RE.search(head)
+    if not m:
+        return ""
+    digits = re.sub(r"\D", "", m.group(0))
+    return f"{digits[:4]} {digits[4:7]} {digits[7:9]} {digits[9:11]}"
+
+
 def build_listing(url: str, title: str, price_text: str, description: str,
                   props: dict[str, str], breadcrumbs: list[str] | None = None,
                   max_degisen: int = 2, max_boyali: int = 4, crumbs: list[str] | None = None,
@@ -309,6 +323,7 @@ def build_listing(url: str, title: str, price_text: str, description: str,
         "bench_urls": bench_urls_from_crumbs(crumbs or []),
         **_with_tramer_fallback(parse_expertise(body), f"{title} {description}"),
         "vites": props.get("vites tipi", ""),
+        "phone": phone_from_body(body),
     }
 
 

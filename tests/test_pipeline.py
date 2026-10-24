@@ -2,18 +2,22 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 
 import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from src.health import CycleStats, Health
-from src.models.domain import Alert, Base, BotState, Listing
 from src.config import settings
+import asyncio
+
+from src.feedback import handle_update, poll_forever
+from src.health import CycleStats, Health
+from src.maintenance import prune
+from src.models.domain import Alert, BenchCache, Base, BotState, Feedback, Listing
 from src.modes.dealer import parse_dealers
-from src.notifications import Telegram
+from src.notifications import Telegram, enqueue_alert, flush_alerts
 from src.pipeline import run_cycle
-from src.pricing.perplexity import PriceService
 
 
 def car(i, price, **kw):
@@ -75,11 +79,11 @@ class PipelineBase(unittest.IsolatedAsyncioTestCase):
             await conn.run_sync(Base.metadata.create_all)
         self.Session = async_sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
 
-        self.sent: list[dict] = []
+        self.sent: list[dict] = []        # sendMessage istekleri
+        self.calls: list[tuple[str, dict]] = []   # diğer Telegram yöntemleri (answerCallbackQuery...)
         self.telegram_ok = True
-        self.pplx_status = 200
-        self.pplx_avg = 1_000_000
-        self.pplx_calls = 0
+        self.telegram_status: dict[str, int] = {}   # chat_id -> zorla HTTP kodu (örn. 403)
+        self.pending_updates: list[dict] = []        # bir sonraki getUpdates cevabı
         FakeScraper.pages = {}
         FakeScraper.lists = {}
         FakeScraper.list_fetches = []
@@ -88,24 +92,31 @@ class PipelineBase(unittest.IsolatedAsyncioTestCase):
         # testler günün saatinden bağımsız çalışsın: galerici gönderim saati her zaman açık
         self._dealer_hours = (settings.DEALER_ACTIVE_START, settings.DEALER_ACTIVE_END)
         settings.DEALER_ACTIVE_START, settings.DEALER_ACTIVE_END = 0, 24
+        self._admin = settings.ADMIN_CHAT_ID
+        settings.ADMIN_CHAT_ID = "ADMIN"
 
         def handler(request: httpx.Request) -> httpx.Response:
-            if "telegram.org" in request.url.host:
+            body = json.loads(request.content)
+            if request.url.path.endswith("/sendMessage"):
                 if not self.telegram_ok:
                     return httpx.Response(500, json={"ok": False})
-                self.sent.append(json.loads(request.content))
+                code = self.telegram_status.get(str(body.get("chat_id")), 200)
+                if code != 200:
+                    return httpx.Response(code, json={"ok": False})
+                self.sent.append(body)
                 return httpx.Response(200, json={"ok": True})
-            self.pplx_calls += 1
-            if self.pplx_status != 200:
-                return httpx.Response(self.pplx_status, json={"error": "x"})
-            body = json.dumps({"ortalama": self.pplx_avg, "min": self.pplx_avg - 1, "max": self.pplx_avg + 1})
-            return httpx.Response(200, json={"choices": [{"message": {"content": body}}]})
+            if request.url.path.endswith("/getUpdates"):
+                res, self.pending_updates = self.pending_updates, []
+                return httpx.Response(200, json={"ok": True, "result": res})
+            self.calls.append((request.url.path.rsplit("/", 1)[-1], body))
+            return httpx.Response(200, json={"ok": True, "result": []})
 
         self.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         self.telegram = Telegram("TOKEN", client=self.client)
 
     async def asyncTearDown(self):
         settings.DEALER_ACTIVE_START, settings.DEALER_ACTIVE_END = self._dealer_hours
+        settings.ADMIN_CHAT_ID = self._admin
         await self.client.aclose()
         await self.engine.dispose()
         try:
@@ -113,59 +124,75 @@ class PipelineBase(unittest.IsolatedAsyncioTestCase):
         except OSError:  # Windows: aiosqlite iş parçacığı dosyayı biraz geç bırakabilir
             pass
 
-    async def cycle(self, session, *, modes=("market",), dealers=(), key="k", stats=None, compare=None, bench_cfg=None, targets=None):
-        prices = PriceService(session, key, client=self.client, retry_sleep=0)
+    async def cycle(self, session, *, modes=("dealer",), dealers=(), stats=None, compare=None, bench_cfg=None, targets=None):
         return await run_cycle(
-            session=session, engine_factory=lambda kind, pm: FakeScraper(pm), telegram=self.telegram,
-            prices=prices, dealers=list(dealers), targets=targets or [self.URL], modes=set(modes), market_chat_id="ADMIN",
-            threshold_pct=15.0, suspicious_pct=45.0, max_listings=40, jitter=(0, 0), stats=stats, compare=compare, bench_cfg=bench_cfg)
+            session=session, engine_factory=lambda pm: FakeScraper(pm), telegram=self.telegram,
+            dealers=list(dealers), targets=targets or [self.URL], modes=set(modes), default_chat_id="ADMIN",
+            max_listings=40, jitter=(0, 0), stats=stats, compare=compare, bench_cfg=bench_cfg)
 
     async def count(self, session, model):
         return (await session.execute(select(func.count()).select_from(model))).scalar_one()
 
 
-class MarketModeTests(PipelineBase):
-    async def test_threshold_dedupe_and_filters(self):
+DEALERS = {"dealers": [
+    {"id": "ahmet", "name": "Ahmet Oto", "chat_id": "111", "market_check": False,
+     "rules": [{"brand": "Renault", "model": "Megane 1.5", "year_min": 2016, "max_price": 900000}]},
+    {"id": "mehmet", "name": "Mehmet Galeri", "chat_id": "222", "market_check": True, "market_discount_pct": 15,
+     "rules": [{"brand": "Renault", "model": "Megane"}, {"brand": "Fiat", "model": "Egea", "max_price": 700000}]},
+]}
+
+
+class DealerModeTests(PipelineBase):
+    async def test_target_price_hits_and_no_duplicates(self):
         FakeScraper.pages[self.URL] = [
-            car(1, 840_000),                               # %16 altında -> bildirim
-            car(2, 860_000),                               # %14 altında -> yok
-            car(3, 500_000, is_heavy_damage=True, is_disqualified=True),  # hasarlı -> Perplexity'e bile gitmez
-            car(4, 1_300_000),                             # pahalı
+            car(40, 880_000),   # Ahmet hedefin altında
+            car(41, 840_000),   # Ahmet hedefin altında
+            car(42, 950_000),   # Ahmet hedefin üstünde, Mehmet'in Megane kuralında fiyat şartı yok -> kimseye yok
+            car(43, 650_000, brand="Fiat", model="Egea", trim="1.4", title="Galeriden Fiat Egea 1.4 2019 Model"),
         ]
+        dealers = parse_dealers(DEALERS)
         async with self.Session() as s:
-            st = await self.cycle(s)
-            self.assertEqual((st.scraped, st.disqualified, st.alerts_queued, st.alerts_sent), (4, 1, 1, 1))
-            self.assertEqual(len(self.sent), 1)
-            self.assertEqual(self.sent[0]["chat_id"], "ADMIN")
-            self.assertIn("%16,0 altında", self.sent[0]["text"])
-            self.assertIn("840.000 TL", self.sent[0]["text"])
-            self.assertEqual(self.pplx_calls, 1)  # aynı araç tek çağrı (önbellek/memo)
-            self.assertEqual(await self.count(s, Listing), 4)
+            st = await self.cycle(s, dealers=dealers)
+            by_chat: dict[str, list[str]] = {}
+            for m in self.sent:
+                by_chat.setdefault(m["chat_id"], []).append(m["text"])
+            self.assertEqual(len(by_chat["111"]), 2)   # Ahmet: 40 ve 41
+            self.assertEqual(len(by_chat["222"]), 1)   # Mehmet: 43 (Egea hedef fiyatı)
+            self.assertIn("Hedef: Fiat Egea ≤ 700.000 TL", by_chat["222"][0])
+            self.assertNotIn("ADMIN", by_chat)
+            self.assertEqual(st.alerts_sent, 3)
 
-            # ikinci döngü: hepsi bilinen -> yeni çağrı/bildirim yok
-            st2 = await self.cycle(s)
-            self.assertEqual((st2.scraped, st2.known_skipped, st2.alerts_sent), (0, 4, 0))
-            self.assertEqual((self.pplx_calls, len(self.sent)), (1, 1))
+            await self.cycle(s, dealers=dealers)       # tekrar çalıştırınca mükerrer mesaj yok
+            self.assertEqual(len(self.sent), 3)
 
-    async def test_price_service_failure_does_not_lose_listing(self):
-        FakeScraper.pages[self.URL] = [car(10, 800_000)]
-        self.pplx_status = 401
+    async def test_damaged_car_only_for_dealers_who_allow_it(self):
+        raw = json.loads(json.dumps(DEALERS))
+        raw["dealers"][0]["allow_damaged"] = True
+        FakeScraper.pages[self.URL] = [car(60, 700_000, is_heavy_damage=True, is_disqualified=True,
+                                           damage_reasons=["3 değişen"])]
         async with self.Session() as s:
-            st = await self.cycle(s)
-            self.assertEqual((st.deferred, st.price_error_kind, st.alerts_sent), (1, "auth", 0))
-            self.assertEqual(await self.count(s, Listing), 0)  # kaydedilmedi -> tekrar denenecek
+            await self.cycle(s, dealers=parse_dealers(raw))
+        self.assertEqual([m["chat_id"] for m in self.sent], ["111"])
+        self.assertIn("3 değişen", self.sent[0]["text"])
 
-            self.pplx_status = 200
-            st2 = await self.cycle(s)
-            self.assertEqual((st2.deferred, st2.alerts_sent), (0, 1))
-            self.assertEqual(await self.count(s, Listing), 1)
-
-    async def test_missing_api_key_is_reported_not_silent(self):
-        FakeScraper.pages[self.URL] = [car(11, 800_000)]
+    async def test_phone_is_shown_when_known(self):
+        FakeScraper.pages[self.URL] = [car(61, 700_000, phone="0507 257 83 99")]
         async with self.Session() as s:
-            st = await self.cycle(s, key="")
-            self.assertEqual((st.deferred, st.price_error_kind), (1, "no_key"))
-            self.assertEqual(self.pplx_calls, 0)
+            await self.cycle(s, dealers=parse_dealers({"dealers": [DEALERS["dealers"][0]]}))
+        self.assertIn("📞 0507 257 83 99", self.sent[0]["text"])
+
+    async def test_strong_deal_is_marked_in_reason(self):
+        FakeScraper.pages[self.URL] = [car(62, 700_000)]
+        d = dict(DEALERS["dealers"][0], strong_tl=150_000)
+        d["rules"] = [dict(d["rules"][0], max_price=900000, baseline=1_000_000)]
+        async with self.Session() as s:
+            await self.cycle(s, dealers=parse_dealers({"dealers": [d]}))
+            reason = (await s.execute(select(Alert.reason))).scalar_one()
+        self.assertFalse(reason.startswith("★"))   # fark yalnız hedef fiyata göre: emsal/model farkı yok -> güçlü sayılmaz
+
+
+class OutboxTests(PipelineBase):
+    DEALER = {"dealers": [DEALERS["dealers"][0]]}
 
     async def test_telegram_outage_retries_next_cycle(self):
         FakeScraper.pages[self.URL] = [car(20, 800_000)]
@@ -178,96 +205,94 @@ class MarketModeTests(PipelineBase):
                 return None
             n.asyncio.sleep = fast  # Telegram yeniden deneme beklemelerini atla
             try:
-                st = await self.cycle(s)
+                st = await self.cycle(s, dealers=parse_dealers(self.DEALER))
                 self.assertEqual((st.alerts_queued, st.alerts_sent), (1, 0))
                 alert = (await s.execute(select(Alert))).scalars().one()
                 self.assertEqual(alert.status, "PENDING")
 
                 self.telegram_ok = True
-                st2 = await self.cycle(s)  # liste boş değil ama hepsi bilinen; outbox yine de boşalır
+                st2 = await self.cycle(s, dealers=parse_dealers(self.DEALER))  # hepsi bilinen; outbox yine de boşalır
                 self.assertEqual(st2.alerts_sent, 1)
                 self.assertEqual((await s.execute(select(Alert))).scalars().one().status, "SENT")
             finally:
                 n.asyncio.sleep = orig
 
-    async def test_suspicious_discount_warning(self):
-        FakeScraper.pages[self.URL] = [car(30, 400_000)]  # %60
+    async def test_message_has_feedback_buttons(self):
+        FakeScraper.pages[self.URL] = [car(21, 800_000)]
         async with self.Session() as s:
-            await self.cycle(s)
-            self.assertIn("Çok yüksek indirim", self.sent[0]["text"])
+            await self.cycle(s, dealers=parse_dealers(self.DEALER))
+            alert_id = (await s.execute(select(Alert.id))).scalar_one()
+        buttons = self.sent[0]["reply_markup"]["inline_keyboard"][0]
+        self.assertEqual([b["callback_data"] for b in buttons], [f"f:{alert_id}:1", f"f:{alert_id}:0"])
 
-
-DEALERS = {"dealers": [
-    {"id": "ahmet", "name": "Ahmet Oto", "chat_id": "111", "market_check": False,
-     "rules": [{"brand": "Renault", "model": "Megane 1.5", "year_min": 2016, "max_price": 900000}]},
-    {"id": "mehmet", "name": "Mehmet Galeri", "chat_id": "222", "market_check": True, "market_discount_pct": 15,
-     "rules": [{"brand": "Renault", "model": "Megane"}, {"brand": "Fiat", "model": "Egea", "max_price": 700000}]},
-]}
-
-
-class DealerModeTests(PipelineBase):
-    async def test_target_price_and_market_check(self):
-        FakeScraper.pages[self.URL] = [
-            car(40, 880_000),   # Ahmet hedefinin altında; Mehmet için piyasa 1.0M -> %12 (yetersiz)
-            car(41, 840_000),   # Ahmet hedefte; Mehmet için %16 piyasa altı
-            car(42, 950_000),   # Ahmet hedefin üstünde; Mehmet %5 -> kimseye yok
-            car(43, 650_000, brand="Fiat", model="Egea", trim="1.4", title="Galeriden Fiat Egea 1.4 2019 Model"),
-        ]
-        dealers = parse_dealers(DEALERS)
+    async def test_permanent_rejection_fails_alert_and_tells_admin_once(self):
+        self.telegram_status["111"] = 403          # galerici botu başlatmamış
+        FakeScraper.pages[self.URL] = [car(22, 800_000), car(23, 810_000)]
         async with self.Session() as s:
-            st = await self.cycle(s, modes=("dealer",), dealers=dealers)
-            by_chat: dict[str, list[str]] = {}
-            for m in self.sent:
-                by_chat.setdefault(m["chat_id"], []).append(m["text"])
-            self.assertEqual(len(by_chat["111"]), 2)   # Ahmet: 40 ve 41
-            self.assertEqual(len(by_chat["222"]), 2)   # Mehmet: 41 (piyasa) ve 43 (hedef fiyat)
-            self.assertTrue(any("880.000 TL" in t for t in by_chat["111"]))
-            mehmet41 = next(t for t in by_chat["222"] if "840.000 TL" in t)
-            self.assertIn("Piyasa ort.", mehmet41)
-            mehmet43 = next(t for t in by_chat["222"] if "650.000 TL" in t)
-            self.assertIn("Hedef: Fiat Egea ≤ 700.000 TL", mehmet43)
-            self.assertNotIn("ADMIN", by_chat)
-            self.assertEqual(st.alerts_sent, 4)
+            await self.cycle(s, dealers=parse_dealers(self.DEALER))
+            statuses = [a.status for a in (await s.execute(select(Alert))).scalars().all()]
+        self.assertEqual(statuses, ["FAILED", "FAILED"])
+        admin = [m for m in self.sent if m["chat_id"] == "ADMIN"]
+        self.assertEqual(len(admin), 1)                         # iki mesaj, tek uyarı (soğuma süresi)
+        self.assertIn("/start", admin[0]["text"])
 
-            # tekrar çalıştırınca mükerrer mesaj yok
-            await self.cycle(s, modes=("dealer",), dealers=dealers)
-            self.assertEqual(len(self.sent), 4)
 
-    async def test_target_hit_survives_price_service_outage(self):
-        FakeScraper.pages[self.URL] = [car(50, 700_000)]
-        self.pplx_status = 500
-        dealers = parse_dealers(DEALERS)
+class FeedbackTests(PipelineBase):
+    async def _alert(self, s, chat="111"):
+        a = await enqueue_alert(s, source_listing_id="1", mode="dealer", dealer_id="ahmet", chat_id=chat, text="t", reason="r")
+        await s.commit()
+        return a
+
+    def _cb(self, alert_id, vote, chat=111):
+        return {"update_id": 1, "callback_query": {"id": "cb1", "data": f"f:{alert_id}:{vote}",
+                                                    "message": {"message_id": 7, "chat": {"id": chat}}}}
+
+    async def test_vote_is_stored_and_buttons_replaced(self):
         async with self.Session() as s:
-            st = await self.cycle(s, modes=("dealer",), dealers=dealers)
-        texts = {m["chat_id"]: m["text"] for m in self.sent}
-        self.assertEqual(list(texts), ["111"])  # Ahmet piyasa servisine ihtiyaç duymaz
-        # Mehmet: hedef fiyatı yok, yalnız piyasa kontrolü var ve servis çöktü -> ilan ertelendi (kaybolmadı)
-        self.assertEqual(st.deferred, 1)
+            a = await self._alert(s)
+            await handle_update(s, self.telegram, self._cb(a.id, 1), "ADMIN")
+            await handle_update(s, self.telegram, self._cb(a.id, 0), "ADMIN")      # fikir değiştirdi: tek oy, sonuncusu
+            rows = (await s.execute(select(Feedback))).scalars().all()
+        self.assertEqual([(r.alert_id, r.vote, r.dealer_id) for r in rows], [(a.id, 0, "ahmet")])
+        self.assertIn("answerCallbackQuery", [c[0] for c in self.calls])
+        self.assertIn("editMessageReplyMarkup", [c[0] for c in self.calls])
 
-        # Servis düzelince ilan yeniden değerlendirilir: Mehmet'e gider, Ahmet'e İKİNCİ kez gitmez
-        self.pplx_status = 200
+    async def test_vote_from_wrong_chat_is_ignored(self):
         async with self.Session() as s:
-            st2 = await self.cycle(s, modes=("dealer",), dealers=dealers)
-        self.assertEqual(st2.deferred, 0)
-        self.assertEqual(sorted(m["chat_id"] for m in self.sent), ["111", "222"])
+            a = await self._alert(s, chat="111")
+            await handle_update(s, self.telegram, self._cb(a.id, 1, chat=999), "ADMIN")
+            self.assertEqual(await self.count(s, Feedback), 0)
 
-    async def test_damaged_car_only_for_dealers_who_allow_it(self):
-        raw = json.loads(json.dumps(DEALERS))
-        raw["dealers"][0]["allow_damaged"] = True
-        FakeScraper.pages[self.URL] = [car(60, 700_000, is_heavy_damage=True, is_disqualified=True,
-                                           damage_reasons=["3 değişen"])]
-        self.pplx_status = 500
+    async def test_start_replies_with_chat_id_and_tells_admin(self):
+        upd = {"update_id": 2, "message": {"text": "/start", "chat": {"id": 555, "first_name": "Ali", "username": "ali_oto"}}}
         async with self.Session() as s:
-            await self.cycle(s, modes=("dealer",), dealers=parse_dealers(raw))
-        self.assertEqual([m["chat_id"] for m in self.sent], ["111"])
-        self.assertIn("3 değişen", self.sent[0]["text"])
+            await handle_update(s, self.telegram, upd, "ADMIN")
+        by_chat = {m["chat_id"]: m["text"] for m in self.sent}
+        self.assertIn("555", by_chat["555"])
+        self.assertIn("chat_id=555", by_chat["ADMIN"])
 
-    async def test_both_modes(self):
-        FakeScraper.pages[self.URL] = [car(70, 800_000)]
-        raw = {"dealers": [DEALERS["dealers"][0]]}
+
+class PollingTests(PipelineBase):
+    _alert = FeedbackTests._alert
+    _cb = FeedbackTests._cb
+
+    async def test_poll_loop_records_vote_and_advances_offset(self):
         async with self.Session() as s:
-            await self.cycle(s, modes=("market", "dealer"), dealers=parse_dealers(raw))
-        self.assertEqual(sorted(m["chat_id"] for m in self.sent), ["111", "ADMIN"])
+            a = await self._alert(s)
+        self.pending_updates = [dict(self._cb(a.id, 1), update_id=9)]
+        task = asyncio.create_task(poll_forever(self.telegram, self.Session, "ADMIN"))
+        try:
+            for _ in range(60):
+                await asyncio.sleep(0.05)
+                async with self.Session() as s:
+                    if await self.count(s, Feedback):
+                        break
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        async with self.Session() as s:
+            self.assertEqual(await self.count(s, Feedback), 1)
+            self.assertEqual((await s.get(BotState, "tg_offset")).value, "10")
 
 
 class HealthTests(PipelineBase):
@@ -284,18 +309,56 @@ class HealthTests(PipelineBase):
             await h.record_cycle(CycleStats(links_found=30))
             self.assertIn("düzeldi", self.sent[-1]["text"])
 
-    async def test_price_service_alert(self):
-        async with self.Session() as s:
-            h = Health(s, self.telegram, "ADMIN")
-            await h.record_cycle(CycleStats(links_found=10, price_error_kind="quota", price_failures=1, deferred=5))
-            self.assertIn("bakiyesi", self.sent[0]["text"])
-
     async def test_heartbeat_after_interval(self):
         async with self.Session() as s:
             h = Health(s, self.telegram, "ADMIN", heartbeat_hours=0)
             await h.record_cycle(CycleStats(links_found=10, scraped=5, alerts_sent=2))
             self.assertIn("Günlük özet", self.sent[-1]["text"])
-            self.assertIn("2 bildirim", self.sent[-1]["text"])
+            self.assertIn("2 mesaj", self.sent[-1]["text"])
+            self.assertIn("👍 0 / 👎 0", self.sent[-1]["text"])
+
+    async def test_page_structure_alert(self):
+        async with self.Session() as s:
+            h = Health(s, self.telegram, "ADMIN")
+            await h.record_cycle(CycleStats(links_found=20, scraped=20, expertise_missing=3))
+            self.assertEqual(self.sent, [])                      # birkaç eksik normal
+            await h.record_cycle(CycleStats(links_found=20, scraped=20, expertise_missing=12))
+            self.assertIn("sayfa yapısı", self.sent[-1]["text"])
+
+    async def test_dealer_summary_once_a_day_at_summary_hour(self):
+        dealers = parse_dealers({"dealers": [{"id": "d", "chat_id": "42", "max_price": 1,
+                                              "rules": [{"brand": "Renault", "max_price": 1}]},
+                                             {"id": "e", "chat_id": "43", "rules": [{"brand": "Fiat", "max_price": 1}]}]})
+        day = datetime(2026, 10, 24, 10, 0)    # UTC; Türkiye saatiyle aynı gün
+        async with self.Session() as s:
+            for i, reason in enumerate(["★ piyasa", "hedef", "★ acil"]):
+                s.add(Alert(source_listing_id=str(i), mode="dealer", dealer_id="d", chat_id="42", text="t",
+                            reason=reason, status="SENT", sent_at=day))
+            await s.commit()
+            h = Health(s, self.telegram, "ADMIN")
+            self.assertEqual(await h.send_dealer_summaries(dealers, now=datetime(2026, 10, 24, 12, 0)), 0)   # 15:00 TR: saati değil
+            self.assertEqual(await h.send_dealer_summaries(dealers, now=datetime(2026, 10, 24, 19, 30)), 2)  # 22:30 TR
+            self.assertEqual(await h.send_dealer_summaries(dealers, now=datetime(2026, 10, 24, 19, 50)), 0)  # aynı gün tekrar yok
+        by_chat = {m["chat_id"]: m["text"] for m in self.sent}
+        self.assertIn("3 ilan gönderdim; 2 tanesi güçlü", by_chat["42"])
+        self.assertIn("yeni ilan çıkmadı", by_chat["43"])
+
+
+class MaintenanceTests(PipelineBase):
+    async def test_prune_removes_old_rows_once_a_day(self):
+        now = datetime(2026, 10, 24, 12, 0)
+        async with self.Session() as s:
+            s.add(BenchCache(cache_key="eski", payload="[]", fetched_at=now - timedelta(days=3)))
+            s.add(BenchCache(cache_key="yeni", payload="[]", fetched_at=now - timedelta(hours=1)))
+            s.add(Alert(source_listing_id="1", mode="dealer", dealer_id="d", chat_id="1", text="t", status="SENT",
+                        created_at=now - timedelta(days=200)))
+            s.add(Alert(source_listing_id="2", mode="dealer", dealer_id="d", chat_id="1", text="t", status="PENDING",
+                        created_at=now - timedelta(days=200)))
+            await s.commit()
+            removed = await prune(s, now)
+            self.assertEqual((removed["bench_cache"], removed["alerts"]), (1, 1))     # bekleyen mesaj silinmez
+            self.assertEqual(await self.count(s, BenchCache), 1)
+            self.assertEqual(await prune(s, now), {})                                # aynı gün ikinci kez çalışmaz
 
 
 if __name__ == "__main__":

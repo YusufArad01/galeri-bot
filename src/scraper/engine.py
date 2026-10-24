@@ -261,6 +261,16 @@ class ScraperEngine:
             return True
         return await page.locator("text=Bağlantınız kontrol ediliyor").count() > 0
 
+    @staticmethod
+    def _trim_diagnostics(keep: int = 20) -> None:
+        """logs/ altındaki hata görüntüleri (png/html) en çok `keep` dosya kalsın: engel günlerinde disk dolmasın."""
+        files = sorted(Path("logs").glob("debug_*"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in files[keep:]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
     async def _capture_diagnostics(self, page: Page, reason: str):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         screenshot_path = f"logs/debug_error_{reason}_{timestamp}.png"
@@ -277,6 +287,7 @@ class ScraperEngine:
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(await page.content())
             logger.info(f"Saved visual diagnostics to {screenshot_path} and HTML to {html_path}")
+            self._trim_diagnostics()
         except Exception as e:
             logger.error(f"Failed to capture diagnostics: {e}")
 

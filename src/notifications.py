@@ -2,7 +2,7 @@
 
 Bildirim önce `alerts` tablosuna yazılır, sonra gönderilir. Telegram/ağ hatasında kayıt
 PENDING kalır ve sonraki döngüde yeniden denenir; böylece geçici bir kesinti fırsat
-kaybettirmez. (Eski sürümde mesaj fire-and-forget gönderiliyordu, hata sadece loga düşüyordu.)
+kaybettirmez. Kalıcı reddedilen mesaj (galerici botu başlatmamış/engellemiş) FAILED olur ve yöneticiye bildirilir.
 """
 from __future__ import annotations
 
@@ -16,30 +16,40 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.models.domain import Alert
+from src.models.domain import Alert, BotState
 
 MAX_LEN = 4096
 MAX_ATTEMPTS = 8
 PENDING_MAX_AGE = timedelta(hours=24)
+PERMANENT_ERRORS = (400, 403, 404)   # bot engellendi, sohbet bulunamadı, ...
+
+
+def feedback_keyboard(alert_id: int) -> dict:
+    return {"inline_keyboard": [[{"text": "👍 Beğendim", "callback_data": f"f:{alert_id}:1"},
+                                 {"text": "👎 Beğenmedim", "callback_data": f"f:{alert_id}:0"}]]}
 
 
 class Telegram:
     def __init__(self, token: str, client: httpx.AsyncClient | None = None):
         self.token = token
         self._client = client
+        self.last_status = 0   # son başarısız gönderimin HTTP kodu
 
     @property
     def configured(self) -> bool:
         return bool(self.token)
 
-    async def send(self, chat_id: str, text: str) -> bool:
+    async def send(self, chat_id: str, text: str, reply_markup: dict | None = None) -> bool:
         if not self.token or not chat_id:
             logger.warning("Telegram token/chat_id eksik; mesaj gönderilemedi.")
             return False
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
         payload = {"chat_id": chat_id, "text": text[:MAX_LEN], "disable_web_page_preview": True}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         owns = self._client is None
         client = self._client or httpx.AsyncClient(timeout=15.0)
+        self.last_status = 0
         try:
             for attempt in range(1, 4):
                 try:
@@ -62,13 +72,50 @@ class Telegram:
                 if resp.status_code >= 500:
                     await asyncio.sleep(2 * attempt)
                     continue
-                # 400/403/404: kalıcı hata (bot engellendi, chat bulunamadı, ...)
+                self.last_status = resp.status_code
                 logger.error(f"Telegram reddetti (chat {chat_id}): HTTP {resp.status_code} {resp.text[:160]}")
                 return False
             return False
         finally:
             if owns:
                 await client.aclose()
+
+    async def call(self, method: str, payload: dict, timeout: float = 15.0) -> dict | None:
+        """Diğer Telegram yöntemleri (getUpdates, answerCallbackQuery...). Hata olursa None."""
+        if not self.token:
+            return None
+        owns = self._client is None
+        client = self._client or httpx.AsyncClient(timeout=timeout + 10)
+        try:
+            resp = await client.post(f"https://api.telegram.org/bot{self.token}/{method}", json=payload)
+            return resp.json() if resp.status_code == 200 else None
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning(f"Telegram {method} hatası: {type(exc).__name__}")
+            return None
+        finally:
+            if owns:
+                await client.aclose()
+
+
+async def notify_once(session: AsyncSession, telegram: Telegram, chat_id: str, kind: str, text: str,
+                      cooldown_hours: float = 6.0) -> bool:
+    """Aynı türde uyarıyı soğuma süresi dolmadan tekrar göndermez. Gönderim denendiyse True."""
+    key = f"alert_last:{kind}"
+    row = (await session.execute(select(BotState).where(BotState.key == key))).scalars().first()
+    if row and row.value:
+        try:
+            if datetime.utcnow() - datetime.fromisoformat(row.value) < timedelta(hours=cooldown_hours):
+                return False
+        except ValueError:
+            pass
+    ok = await telegram.send(chat_id, text)
+    if ok:
+        if row:
+            row.value = datetime.utcnow().isoformat()
+        else:
+            session.add(BotState(key=key, value=datetime.utcnow().isoformat()))
+        await session.commit()
+    return ok
 
 
 async def enqueue_alert(session: AsyncSession, *, source_listing_id: str, mode: str, dealer_id: str,
@@ -109,11 +156,18 @@ async def flush_alerts(session: AsyncSession, telegram: Telegram, now: datetime 
             still += 1
             continue
         alert.attempts += 1
-        if await telegram.send(alert.chat_id, alert.text):
+        if await telegram.send(alert.chat_id, alert.text, feedback_keyboard(alert.id)):
             alert.status = "SENT"
             alert.sent_at = datetime.utcnow()
             sent += 1
             logger.success(f"Telegram bildirimi gönderildi [{alert.mode}/{alert.dealer_id or '-'}] {alert.source_listing_id}")
+        elif telegram.last_status in PERMANENT_ERRORS:
+            alert.status = "FAILED"
+            await session.commit()
+            await notify_once(session, telegram, settings.admin_chat, f"tg_fail:{alert.chat_id}",
+                              f"⚠️ {alert.dealer_id or 'Genel mod'} sohbetine ({alert.chat_id}) mesaj gidemedi "
+                              f"(HTTP {telegram.last_status}). Galerici botu başlatmamış (/start) ya da engellemiş olabilir.",
+                              cooldown_hours=12)
         else:
             still += 1
         await asyncio.sleep(0.3)  # Telegram saniyede ~1 mesaj/sohbet toleransı

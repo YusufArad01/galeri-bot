@@ -15,9 +15,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from src.modes.market import Candidate, discount_pct, fmt_pct, fmt_tl, listing_block
+from src.benchmark import BenchBudget
+from src.messages import Candidate, discount_pct, fmt_pct, fmt_tl, listing_block
 from src.parsing import alnum_key, fold, tokens
-from src.pricing.perplexity import PriceEstimate, PriceService, PriceServiceError
 
 
 class DealerConfigError(ValueError):
@@ -166,8 +166,8 @@ class Dealer:
     rules: tuple[Rule, ...]
     market_check: bool = False
     market_discount_pct: float = 15.0
+    strong_tl: int = 150_000             # bu TL ve üstü fark = "güçlü fırsat" (günlük özette sayılır)
     market_min_profit_tl: int = 0        # >0: emsal ortancasından en az bu kadar TL ucuz olmalı (yüzde alt sınır yine geçerli)
-    perplexity_fallback: bool = True     # False: aynı donanımda yeterli emsal yoksa piyasa kontrolü atlanır (Perplexity tahmini kullanılmaz)
     allow_damaged: bool = False
     active: bool = True
     urgent_words: tuple[str, ...] = ()   # başlıkta geçerse fiyat şartı aranmaz, kurala uyan ilan direkt gider (acil satılık, kelepir...)
@@ -281,7 +281,7 @@ def parse_dealers(raw: dict | list) -> list[Dealer]:
             market_check=market_check,
             market_discount_pct=float(d.get("market_discount_pct", 15.0)),
             market_min_profit_tl=int(d.get("market_min_profit_tl", 0) or 0),
-            perplexity_fallback=bool(d.get("perplexity_fallback", True)),
+            strong_tl=int(d.get("strong_tl", 150_000)),
             allow_damaged=bool(d.get("allow_damaged", False)),
             active=bool(d.get("active", True)),
             blacklist=tuple(str(x) for x in (d.get("blacklist") or [])),
@@ -312,21 +312,19 @@ def search_urls(dealers: list[Dealer]) -> list[str]:
     return list(seen)
 
 
-async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
-                   fallback_chat_id: str, bench=None) -> tuple[list[Candidate], PriceServiceError | None]:
+async def evaluate(data: dict, dealers: list[Dealer], fallback_chat_id: str,
+                   bench=None) -> tuple[list[Candidate], BenchBudget | None]:
     """Her galerici için en fazla bir bildirim üretir: (bildirimler, ertelenen_hata).
 
-    Piyasa kontrolü (market_check) önce arabam'daki aynı donanım/motor/modeldeki güncel ilanlarla
-    yapılır (bench); karşılaştırma bulunamazsa Perplexity tahminine düşülür. İkisi de yalnızca
-    kurala uyan + market_check açık galericilerde çalışır. Hedef fiyat
-    zaten tetiklenmişse piyasa servisi çökse bile o galericinin bildirimi üretilir. Servis
-    hatası yüzünden değerlendirilemeyen galerici varsa hata ayrıca döner; çağrıcı, başarılı
-    bildirimleri kuyruğa alıp ilanı sonraki döngüde yeniden değerlendirir (mükerrer bildirim
-    alert tablosundaki benzersizlik kısıtıyla engellenir).
+    Piyasa kontrolü (market_check) arabam'daki aynı donanımdaki güncel ilanlarla yapılır (bench); emsal yoksa
+    kontrol atlanır. Hedef fiyat ya da acil başlık zaten tetiklenmişse emsal sayfası hakkı dolsa bile bildirim
+    üretilir. Emsal hakkı yüzünden değerlendirilemeyen galerici varsa hata ayrıca döner; çağıran, başarılı
+    bildirimleri kuyruğa alıp ilanı sonraki döngüde yeniden değerlendirir (mükerrer bildirim alerts tablosundaki
+    benzersizlik kısıtıyla engellenir).
     """
     price = float(data["price"])
     out: list[Candidate] = []
-    deferred: PriceServiceError | None = None
+    deferred: BenchBudget | None = None
     for dealer in dealers:
         if data.get("is_heavy_damage") and not dealer.allow_damaged:
             continue
@@ -339,42 +337,35 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
             continue
 
         target_hits = [r for r in matched if r.max_price is not None and price <= r.max_price]
-
         urgent = urgent_hit(data.get("title", ""), dealer.urgent_words)
-        est: PriceEstimate | None = None
-        p25 = 0.0
-        source = ""   # piyasa değerinin kaynağı: karşılaştırma düzeyi ya da "tahmin"
+        avg = p25 = 0.0
+        source = ""   # emsal değerinin kaynağı: karşılaştırma düzeyi
         market_hit = False
-        market_err: PriceServiceError | None = None
-        if dealer.market_check:
+        if dealer.market_check and bench is not None:
             try:
-                res = await bench.stats(data) if bench is not None else None
-                if res is not None:
-                    est = PriceEstimate(res.median, None, None, "benchmark")
-                    p25 = res.p25
-                    source = f"{res.level} {res.comparables} güncel ilanın ortası"
-                elif dealer.perplexity_fallback:
-                    est = await prices.estimate(data["brand"], data["model"], data.get("trim", ""),
-                                                data["year"], data.get("km") or 0)
-                    source = "Piyasa ort. (tahmin)"
-            except PriceServiceError as exc:
+                res = await bench.stats(data)
+            except BenchBudget as exc:
                 if not target_hits and not urgent:
                     deferred = deferred or exc
                     continue
-                market_err = exc
-            if est and est.average > 0:
+                res = None
+            if res is not None:
+                avg, p25 = res.median, res.p25
+                source = f"{res.level} {res.comparables} güncel ilanın ortası"
                 floors = [r.market_min_profit_tl for r in matched if r.market_min_profit_tl is not None]
                 floor = min(floors) if floors else dealer.market_min_profit_tl
-                market_hit = discount_pct(price, est.average) >= dealer.market_discount_pct and                     est.average - price >= floor and (not p25 or price <= p25)
+                market_hit = (discount_pct(price, avg) >= dealer.market_discount_pct and avg - price >= floor
+                              and (not p25 or price <= p25))
 
         model_note = ""
+        gap_tl = avg - price if avg else 0.0
         applicable = [(r, e) for r in matched if r.price_model and (e := r.price_model.expected(data)) is not None]
         if applicable:
             rule, expected = max(applicable, key=lambda t: t[1] - price)
-            floors = rule.market_min_profit_tl or dealer.market_min_profit_tl
-            gap = expected - price
-            market_hit = gap >= floors and (not p25 or price <= p25)   # galerici bandı karar verir, emsal alt çeyreği veto eder
-            model_note = f"📐 Fiyat modeli: referans {fmt_tl(expected)} TL → ilan {fmt_tl(abs(gap))} TL {'altında' if gap >= 0 else 'üstünde'}"
+            floor = rule.market_min_profit_tl or dealer.market_min_profit_tl
+            gap_tl = expected - price
+            market_hit = gap_tl >= floor and (not p25 or price <= p25)   # galerici bandı karar verir, emsal alt çeyreği veto eder
+            model_note = f"📐 Fiyat modeli: referans {fmt_tl(expected)} TL → ilan {fmt_tl(abs(gap_tl))} TL {'altında' if gap_tl >= 0 else 'üstünde'}"
         if not target_hits and not market_hit and not urgent:
             continue
 
@@ -390,21 +381,22 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
         if urgent:
             lines.append(f"🚨 Başlıkta \"{urgent}\" geçiyor: satıcı acil satmak istiyor, pazarlık payı olabilir.")
             reasons.append(f"acil: {urgent}")
-        if est and est.average > 0:
-            pct = discount_pct(price, est.average)
-            lines.append(f"📊 {source}: {fmt_tl(est.average)} TL (ilan %{fmt_pct(pct)} / {fmt_tl(abs(est.average - price))} TL {'altında' if pct >= 0 else 'üstünde'})")
+        if avg > 0:
+            pct = discount_pct(price, avg)
+            lines.append(f"📊 {source}: {fmt_tl(avg)} TL (ilan %{fmt_pct(pct)} / {fmt_tl(abs(avg - price))} TL {'altında' if pct >= 0 else 'üstünde'})")
             if market_hit:
                 reasons.append(f"piyasa -%{fmt_pct(pct)}")
-        elif market_err is not None:
-            lines.append("📊 Piyasa ortalaması şu an alınamadı.")
         if any(r.max_tramer_tl is not None for r in matched) and data.get("tramer_tl") is None:
             lines.append("⚠️ Tramer tutarı ilanda belirtilmemiş: satıcıya sorun.")
         if data.get("is_heavy_damage"):
             lines.append("⚠️ Hasar/boya kaydı bulunan ilan: " + ", ".join(data.get("damage_reasons") or ["kontrol edin"]))
+        if data.get("phone"):
+            lines.append(f"📞 {data['phone']}")
         lines += ["", f"🔗 {data['url']}"]
 
         chat_id = dealer.chat_id or fallback_chat_id
         if not dealer.chat_id:
             logger.warning(f"Galerici {dealer.id} için chat_id yok; bildirim yönetici sohbetine gidiyor.")
-        out.append(Candidate("dealer", dealer.id, chat_id, " + ".join(reasons), "\n".join(lines)))
+        strong = "★ " if gap_tl >= dealer.strong_tl else ""
+        out.append(Candidate("dealer", dealer.id, chat_id, strong + " + ".join(reasons), "\n".join(lines)))
     return out, deferred

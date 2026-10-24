@@ -17,17 +17,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.domain import BenchCache
 from src.parsing import tokens
-from src.pricing.perplexity import PriceServiceError
 
 MIN_PRICE = 50_000.0
 LEVELS = ["Aynı donanımdaki", "Aynı motordaki", "Aynı modeldeki"]  # bench_urls sırasıyla (özelden genele)
 
 
-class BenchBudget(PriceServiceError):
+class BenchBudget(Exception):
     """Bu döngünün yeni sayfa hakkı doldu; ilan kaydedilmez, sonraki döngüde denenir."""
 
     def __init__(self):
-        super().__init__("bench_budget", "bu döngüde açılabilecek karşılaştırma sayfası sınırı doldu")
+        super().__init__("bu döngüde açılabilecek karşılaştırma sayfası sınırı doldu")
 
 
 @dataclass(frozen=True)

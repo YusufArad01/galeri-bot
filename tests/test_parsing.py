@@ -80,5 +80,15 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(fold("İSTANBUL Ağır Hasar ı"), "istanbul agir hasar i")
 
 
+class PhoneTests(unittest.TestCase):
+    def test_phone_from_seller_block_only(self):
+        from src.parsing import phone_from_body
+        body = ("Satıcı\nEmre\xa0Can\xa0Özkaya\xa0/\xa00\xa0507\xa0257\xa083\xa099\nBoya, Değişen ve Tramer\n"
+                "Çağrı merkezi 0 212 123 45 67")
+        self.assertEqual(phone_from_body(body), "0507 257 83 99")
+        self.assertEqual(phone_from_body("Telefon yok\nBoya, Değişen ve Tramer\n0 532 111 22 33"), "")   # başlıktan sonrası sayılmaz
+        self.assertEqual(phone_from_body(""), "")
+
+
 if __name__ == "__main__":
     unittest.main()

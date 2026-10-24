@@ -2,31 +2,27 @@ import asyncio
 
 from loguru import logger
 
+from src.benchmark import BenchConfig
 from src.config import settings
 from src.database import engine, Base, AsyncSessionLocal
+from src.feedback import poll_forever
 from src.health import CycleStats, Health
+from src.maintenance import prune
 from src.modes import dealer as dealer_mode
-from src.benchmark import BenchConfig
 from src.modes.compare import CompareConfig
 from src.notifications import Telegram
 from src.pipeline import build_targets, forget_known, run_cycle
-from src.pricing.perplexity import PriceService
 from src.proxy.manager import ProxyManager
 from src.scraper.engine import ScraperEngine
-from src.scraper.vavacars_engine import VavaCarsEngine
 
-
-def engine_factory(kind: str, proxy_manager: ProxyManager):
-    return VavaCarsEngine(proxy_manager) if kind == "vava" else ScraperEngine(proxy_manager)
+_OLD_TABLES = ("price_cache", "market_stats", "opportunities")   # eski sürümlerden kalan, artık kullanılmayan tablolar
 
 
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # create_all mevcut tabloya sütun eklemez: eski veritabanları için elle ekle
-        cols = [row[1] for row in (await conn.exec_driver_sql("PRAGMA table_info(listings)")).fetchall()]
-        if "is_disqualified" not in cols:
-            await conn.exec_driver_sql("ALTER TABLE listings ADD COLUMN is_disqualified BOOLEAN NOT NULL DEFAULT 0")
+        for table in _OLD_TABLES:
+            await conn.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
     logger.info("Database initialized.")
 
 
@@ -40,13 +36,11 @@ def load_dealers_safe(previous: list[dealer_mode.Dealer]) -> tuple[list[dealer_m
 
 def describe_mode(dealers: list[dealer_mode.Dealer]) -> str:
     lines = [f"Mod: {settings.BOT_MODE}"]
-    if "market" in settings.modes:
-        lines.append(f"• Piyasa: ortalamanın %{settings.DISCOUNT_THRESHOLD_PCT:g} altı")
     if "dealer" in settings.modes:
         rules = sum(len(d.rules) for d in dealers)
         lines.append(f"• Galerici: {len(dealers)} galerici, {rules} kural")
     if "compare" in settings.modes:
-        lines.append(f"• Karşılaştırma: benzerlerinden en az %{settings.COMPARE_MIN_DISCOUNT_PCT:g} ucuz adaylardan "
+        lines.append(f"• Genel: benzerlerinden en az %{settings.COMPARE_MIN_DISCOUNT_PCT:g} ucuz adaylardan "
                      f"{settings.COMPARE_RELEASE_MINUTES} dk'da bir en iyi {settings.COMPARE_MAX_ITEMS}, günde en çok "
                      f"{settings.COMPARE_DAILY_MAX} ({settings.COMPARE_ACTIVE_START}:00-{settings.COMPARE_ACTIVE_END}:00)")
     lines.append(f"• Döngü: {settings.SCRAPE_INTERVAL_MINUTES} dk, en çok {settings.MAX_LISTINGS_PER_CYCLE} yeni ilan")
@@ -68,15 +62,12 @@ async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], deale
             await health.notify_admin("no_target", "⚠️ TARGET_URL tanımlı değil; taranacak sayfa yok.", cooldown_hours=12)
             return stats
 
-        prices = PriceService(session, settings.PERPLEXITY_API_KEY, settings.PERPLEXITY_MODEL, settings.PRICE_CACHE_DAYS)
         try:
             await asyncio.wait_for(
                 run_cycle(
-                    session=session, engine_factory=engine_factory, telegram=telegram, prices=prices,
+                    session=session, engine_factory=ScraperEngine, telegram=telegram,
                     dealers=dealers, targets=targets, modes=settings.modes,
-                    market_chat_id=settings.TELEGRAM_CHAT_ID,
-                    threshold_pct=settings.DISCOUNT_THRESHOLD_PCT,
-                    suspicious_pct=settings.SUSPICIOUS_DISCOUNT_PCT,
+                    default_chat_id=settings.TELEGRAM_CHAT_ID,
                     max_listings=settings.MAX_LISTINGS_PER_CYCLE,
                     jitter=(settings.JITTER_MIN_SECONDS, settings.JITTER_MAX_SECONDS),
                     stats=stats,
@@ -114,10 +105,9 @@ async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], deale
             stats.scrape_errors += 1
             await session.rollback()
             await health.notify_admin("fatal", f"❌ Tarama döngüsünde beklenmeyen hata: {type(exc).__name__}: {str(exc)[:200]}", cooldown_hours=3)
-        stats.price_calls = prices.calls
-        stats.price_failures = prices.failures
-        stats.price_error_kind = stats.price_error_kind or prices.last_error_kind
         await health.record_cycle(stats)
+        await health.send_dealer_summaries(dealers)
+        await prune(session)
     logger.info(f"Cycle stats: {stats}")
     return stats
 
@@ -142,6 +132,7 @@ async def main():
         health = Health(session, telegram, settings.admin_chat, settings.HEARTBEAT_HOURS, settings.BLOCKED_CYCLES_ALERT)
         await health.startup(describe_mode(dealers))
 
+    listener = asyncio.create_task(poll_forever(telegram, AsyncSessionLocal, settings.admin_chat))  # 👍/👎 ve /start
     blocked_streak = 0
     while True:
         if "dealer" in settings.modes:
@@ -151,6 +142,8 @@ async def main():
             stats = await one_cycle(telegram, dealers, dealer_error)
         except Exception as exc:  # son çare: döngü ne olursa olsun devam etsin
             logger.exception(f"Unhandled error outside cycle: {exc}")
+        if listener.done():   # dinleme görevi beklenmedik biçimde bittiyse yeniden başlat
+            listener = asyncio.create_task(poll_forever(telegram, AsyncSessionLocal, settings.admin_chat))
         # Engel varsa sıklaştırmak engeli uzatır: 15, 30, 60, en çok 120 dk bekle (engel kalkınca normal aralığa döner)
         blocked_streak = blocked_streak + 1 if stats is not None and stats.blocked and not stats.scraped else 0
         wait = min(120, 15 * 2 ** (blocked_streak - 1)) if blocked_streak else settings.SCRAPE_INTERVAL_MINUTES

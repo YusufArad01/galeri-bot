@@ -1,32 +1,24 @@
 """Sağlık izleme: sessizlik "fırsat yok" mu, "bot bozuk" mu ayırt edilebilsin.
 
-- Başlangıç mesajı, günlük özet (heartbeat)
+- Başlangıç mesajı, günlük yönetici özeti (heartbeat)
 - Ardışık "0 ilan / engellendi" döngülerinde uyarı, düzelince bildirim
-- Perplexity hatalarında (anahtar yok, yetkisiz, bakiye, limit) uyarı
+- İlan sayfası yapısı değişirse (ekspertiz bölümü okunamıyor) uyarı
+- Galericilere günlük kısa özet ("bugün size N ilan gönderdim")
 - Aynı türde uyarı soğuma süresiyle tekrar edilir (spam yok)
 """
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.domain import BotState
-from src.notifications import Telegram
-
-PRICE_HELP = {
-    "no_key": "PERPLEXITY_API_KEY tanımlı değil (Railway > Variables).",
-    "auth": "Perplexity API anahtarı geçersiz veya yetkisiz.",
-    "quota": "Perplexity bakiyesi/kotası bitmiş.",
-    "rate": "Perplexity istek limiti aşıldı (429).",
-    "http": "Perplexity sunucu/HTTP hatası.",
-    "network": "Perplexity'ye bağlanılamadı.",
-    "breaker": "Perplexity art arda hata verdi, çağrılar durduruldu.",
-}
+from src.config import settings
+from src.models.domain import Alert, BotState, Feedback
+from src.notifications import Telegram, notify_once
 
 
 @dataclass
@@ -39,15 +31,12 @@ class CycleStats:
     evaluated: int = 0
     alerts_queued: int = 0
     alerts_sent: int = 0
-    price_calls: int = 0
-    price_failures: int = 0
-    price_cache_hits: int = 0
-    price_error_kind: str | None = None
-    deferred: int = 0  # fiyat servisi hatası yüzünden sonraya bırakılan ilanlar
-    bench_pages: int = 0   # bu döngüde açılan karşılaştırma sayfası
-    bench_empty: int = 0   # boş gelen karşılaştırma sayfası
+    deferred: int = 0        # emsal sayfası hakkı dolduğu için sonraya bırakılan ilanlar
+    bench_pages: int = 0     # bu döngüde açılan karşılaştırma sayfası
+    bench_empty: int = 0     # boş gelen karşılaştırma sayfası
+    expertise_missing: int = 0   # ekspertiz bölümü okunamayan ilan (sayfa yapısı değişti göstergesi)
     blocked: bool = False
-    block_note: str = ""  # engelde siteden gelen sayfanın başlığı/metni (teşhis için)
+    block_note: str = ""     # engelde siteden gelen sayfanın başlığı/metni (teşhis için)
     timed_out: bool = False
 
 
@@ -57,12 +46,9 @@ class Totals:
     cycles: int = 0
     links_found: int = 0
     scraped: int = 0
-    disqualified: int = 0
     evaluated: int = 0
     alerts_queued: int = 0
     alerts_sent: int = 0
-    price_calls: int = 0
-    price_failures: int = 0
     blocked_cycles: int = 0
     errors: int = 0
 
@@ -91,18 +77,7 @@ class Health:
 
     # --- uyarı gönderimi ------------------------------------------------------
     async def notify_admin(self, kind: str, text: str, cooldown_hours: float = 6.0) -> bool:
-        """Soğuma süresi dolmadıysa göndermez. Gönderim denendiyse True."""
-        last_raw = await self._get(f"alert_last:{kind}")
-        if last_raw:
-            try:
-                if datetime.utcnow() - datetime.fromisoformat(last_raw) < timedelta(hours=cooldown_hours):
-                    return False
-            except ValueError:
-                pass
-        ok = await self.telegram.send(self.admin_chat, text)
-        if ok:
-            await self._set(f"alert_last:{kind}", datetime.utcnow().isoformat())
-        return ok
+        return await notify_once(self.session, self.telegram, self.admin_chat, kind, text, cooldown_hours)
 
     async def startup(self, mode_text: str) -> None:
         await self.notify_admin("startup", f"🟢 Arbitraj botu başladı\n{mode_text}", cooldown_hours=1)
@@ -113,18 +88,15 @@ class Health:
         totals.cycles += 1
         totals.links_found += stats.links_found
         totals.scraped += stats.scraped
-        totals.disqualified += stats.disqualified
         totals.evaluated += stats.evaluated
         totals.alerts_queued += stats.alerts_queued
         totals.alerts_sent += stats.alerts_sent
-        totals.price_calls += stats.price_calls
-        totals.price_failures += stats.price_failures
         totals.errors += stats.scrape_errors
         if stats.blocked:
             totals.blocked_cycles += 1
 
         await self._check_blocked(stats)
-        await self._check_price_service(stats)
+        await self._check_page_structure(stats)
         if stats.timed_out:
             await self.notify_admin("timeout", "⏱️ Tarama döngüsü zaman aşımına uğradı ve iptal edildi. Sonraki döngüde tekrar denenecek.")
 
@@ -151,7 +123,7 @@ class Health:
                 await self.notify_admin(
                     "blocked",
                     f"🚧 Son {streak} döngüdür siteden ilan alınamıyor (engel/captcha ya da sayfa yapısı değişmiş olabilir).\n"
-                    "Çözüm: PROXY_URL ile konut/mobil proxy ekleyin veya sayfa seçicilerini kontrol edin. "
+                    "Çözüm: yeni/yedek proxy IP'si ekleyin ya da sayfa seçicilerini kontrol edin. "
                     "Bu sürede fırsat mesajı gelmemesi normaldir."
                     + (f"\nSayfadan gelen ipucu: {stats.block_note}" if stats.block_note else ""),
                     cooldown_hours=6,
@@ -161,25 +133,52 @@ class Health:
             if streak >= self.blocked_alert_after:
                 await self.telegram.send(self.admin_chat, "✅ Site erişimi düzeldi, taramaya devam ediliyor.")
 
-    async def _check_price_service(self, stats: CycleStats) -> None:
-        kind = stats.price_error_kind
-        if kind and (stats.price_failures >= 3 or kind in ("no_key", "auth", "quota")):
+    async def _check_page_structure(self, stats: CycleStats) -> None:
+        if stats.scraped >= 10 and stats.expertise_missing * 2 >= stats.scraped:
             await self.notify_admin(
-                f"price:{kind}",
-                f"💸 Piyasa fiyatı servisi sorunlu: {PRICE_HELP.get(kind, kind)}\n"
-                f"Bu döngüde {stats.deferred} ilan değerlendirilemedi; düzelince otomatik yeniden denenecek.",
-                cooldown_hours=6,
-            )
+                "page_structure",
+                f"🧩 Bu turda incelenen {stats.scraped} ilanın {stats.expertise_missing} tanesinde ekspertiz bölümü okunamadı: "
+                "arabam sayfa yapısı değişmiş olabilir. Galerici kuralları bu yüzden ilanları eleyebilir.",
+                cooldown_hours=12)
 
     async def _send_heartbeat(self, t: Totals) -> None:
+        since = datetime.fromisoformat(t.since)
+        votes = dict((await self.session.execute(
+            select(Feedback.vote, func.count()).where(Feedback.created_at >= since).group_by(Feedback.vote))).all())
         text = (
             "📊 Günlük özet\n"
-            f"• {t.cycles} döngü, {t.links_found} ilan görüldü, {t.scraped} yeni ilan incelendi\n"
-            f"• {t.disqualified} ilan hasar/yaş filtresine takıldı, {t.evaluated} ilan fiyat kontrolünden geçti\n"
-            f"• 🔔 {t.alerts_sent} bildirim gönderildi ({t.alerts_queued} oluştu)\n"
-            f"• Perplexity: {t.price_calls} çağrı, {t.price_failures} hata\n"
-            f"• Engellenen döngü: {t.blocked_cycles}, hata: {t.errors}\n"
-            "Bildirim gelmiyorsa ve burada hata yoksa: o sürede eşiği geçen ilan çıkmamıştır."
+            f"• {t.cycles} tur, {t.scraped} yeni ilan incelendi\n"
+            f"• 🔔 {t.alerts_sent} mesaj gönderildi ({t.alerts_queued} oluştu)\n"
+            f"• Geri bildirim: 👍 {votes.get(1, 0)} / 👎 {votes.get(0, 0)}\n"
+            f"• Engellenen tur: {t.blocked_cycles}, hata: {t.errors}\n"
+            "Mesaj gelmiyorsa ve burada hata yoksa: o sürede uygun ilan çıkmamıştır."
         )
         if not await self.telegram.send(self.admin_chat, text):
             logger.warning("Heartbeat gönderilemedi")
+
+    # --- galericilere günlük kısa özet ----------------------------------------
+    async def send_dealer_summaries(self, dealers: list, now: datetime | None = None) -> int:
+        """DEALER_SUMMARY_HOUR (Türkiye saati) içinde günde bir kez: "bugün size N ilan gönderdim, K tanesi güçlü"."""
+        now = now or datetime.utcnow()
+        tr = now + timedelta(hours=3)
+        day = tr.date().isoformat()
+        if tr.hour != settings.DEALER_SUMMARY_HOUR or await self._get("dealer_summary_day") == day:
+            return 0
+        day_start = datetime(tr.year, tr.month, tr.day) - timedelta(hours=3)   # UTC
+        count = 0
+        for d in dealers:
+            if not d.chat_id:
+                continue
+            reasons = (await self.session.execute(
+                select(Alert.reason).where(Alert.dealer_id == d.id, Alert.status == "SENT",
+                                           Alert.sent_at >= day_start))).scalars().all()
+            n, strong = len(reasons), sum(r.startswith("★") for r in reasons)
+            if not n:
+                text = "📊 Bugün şartlarınıza uyan yeni ilan çıkmadı. Takipteyim."
+            elif strong:
+                text = f"📊 Bugün size {n} ilan gönderdim; {strong} tanesi güçlü fırsat görünüyor."
+            else:
+                text = f"📊 Bugün size {n} ilan gönderdim; güçlü fırsat çıkmadı."
+            count += await self.telegram.send(d.chat_id, text)
+        await self._set("dealer_summary_day", day)
+        return count

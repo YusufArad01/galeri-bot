@@ -57,7 +57,7 @@ def profil(form: dict) -> dict:
     kar = v.get("min_kar_tl", 100_000)
     return {"id": g["id"], "name": g.get("ad", g["id"]), "chat_id": str(g.get("telegram") or ""),
             "market_check": True, "market_discount_pct": v.get("alt_yuzde", 3), "market_min_profit_tl": kar,
-            "perplexity_fallback": False, "allow_damaged": False,
+            "allow_damaged": False,
             "blacklist": v.get("kara_liste", KARA_LISTE), "urgent_words": v.get("acil_kelimeler", ACIL),
             "rules": [kural(k, kar) for k in form["kurallar"]]}
 
@@ -95,7 +95,7 @@ def main() -> None:
     print(f"{yeni['id']}: {len(yeni['rules'])} kural eklendi. Toplam {len(cfg['dealers'])} galerici, {len(urls)} farklı arama sayfası "
           f"(her tur ~{len(urls) * 2} liste isteği).")
     if not yeni["chat_id"]:
-        print("UYARI: Telegram numarası yok; mesajlar yönetici sohbetine gider. chat_id_bul.py ile bul.")
+        print("UYARI: Telegram numarası yok; mesajlar yönetici sohbetine gider. Galerici bota /start yazınca numara sana bildirilir.")
     if a.railway:
         railway_yukle(cfg)
 

@@ -46,10 +46,10 @@ class ParseTests(PipelineBase):
 
     def test_modes_parse(self):
         self.assertEqual(Settings(BOT_MODE="compare").modes, {"compare"})
-        self.assertEqual(Settings(BOT_MODE="all").modes, {"market", "dealer", "compare"})
-        self.assertEqual(Settings(BOT_MODE="market, compare").modes, {"market", "compare"})
-        with self.assertRaises(ValueError):
-            Settings(BOT_MODE="digest").modes
+        self.assertEqual(Settings(BOT_MODE="compare, dealer").modes, {"dealer", "compare"})
+        for bad in ("digest", "market", "all"):
+            with self.assertRaises(ValueError):
+                Settings(BOT_MODE=bad).modes
 
 
 class CompareModeTests(PipelineBase):
@@ -61,7 +61,7 @@ class CompareModeTests(PipelineBase):
         FakeScraper.lists[ENGINE] = [row(i, 1_000_000 + i * 1000) for i in range(10, 16)]
         FakeScraper.lists[BASE] = [row(i, 1_300_000) for i in range(20, 30)]
 
-    async def test_sends_only_best_one_and_no_perplexity(self):
+    async def test_sends_only_best_one(self):
         self.lists()
         FakeScraper.pages[self.URL] = [
             listing(1, 850_000),   # %15 ucuz
@@ -71,7 +71,6 @@ class CompareModeTests(PipelineBase):
         ]
         async with self.Session() as s:
             st = await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
-            self.assertEqual(self.pplx_calls, 0)
             self.assertEqual(len(self.sent), 1)                        # her turda tek mesaj
             text = self.sent[0]["text"]
             self.assertIn("800.000 TL", text)
@@ -116,13 +115,6 @@ class CompareModeTests(PipelineBase):
             st = await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
         self.assertEqual((self.sent, st.bench_empty), ([], 2))
 
-    async def test_market_and_compare_together(self):
-        self.lists()
-        FakeScraper.pages[self.URL] = [listing(1, 800_000)]
-        async with self.Session() as s:
-            await self.cycle(s, modes=("market", "compare"), compare=self.CFG, bench_cfg=BenchConfig())
-        self.assertEqual(sorted("🏆" in m["text"] for m in self.sent), [False, True])
-
 
 class BlockNoteTests(PipelineBase):
     async def test_block_alert_contains_page_hint(self):
@@ -136,16 +128,14 @@ class BlockNoteTests(PipelineBase):
 
 
 class TargetTests(PipelineBase):
-    def test_pages_expand_arabam_only(self):
+    def test_pages_expand(self):
         from src.pipeline import build_targets
-        t = build_targets(["https://www.arabam.com/ikinci-el/otomobil", "https://tr.vava.cars/buy/cars"],
-                          [], {"market"}, pages=3)
+        t = build_targets(["https://www.arabam.com/ikinci-el/otomobil"], [], {"compare"}, pages=3)
         self.assertEqual(t, [
             "https://www.arabam.com/ikinci-el/otomobil?sort=DateDesc",
             "https://www.arabam.com/ikinci-el/otomobil?sort=DateDesc&page=2",
-            "https://www.arabam.com/ikinci-el/otomobil?sort=DateDesc&page=3",
-            "https://tr.vava.cars/buy/cars"])
-        self.assertEqual(len(build_targets(["https://www.arabam.com/x"], [], {"market"})), 1)
+            "https://www.arabam.com/ikinci-el/otomobil?sort=DateDesc&page=3"])
+        self.assertEqual(len(build_targets(["https://www.arabam.com/x"], [], {"compare"})), 1)
 
     def test_dealer_pages_come_first_and_go_deeper(self):
         from src.pipeline import build_targets
@@ -268,30 +258,29 @@ class KmAdjustTests(PipelineBase):
 
 
 class DealerBenchTests(PipelineBase):
-    async def test_market_check_uses_arabam_listings_not_perplexity(self):
+    async def test_market_check_uses_arabam_listings(self):
         FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 7)]
-        self.pplx_status = 500                                   # Perplexity çökse bile galerici mesajı gelir
         FakeScraper.pages[self.URL] = [listing(1, 840_000)]
         dealers = parse_dealers({"dealers": [DEALERS["dealers"][1]]})   # market_check açık galerici
         async with self.Session() as s:
             st = await self.cycle(s, modes=("dealer",), dealers=dealers)
-        self.assertEqual((st.deferred, self.pplx_calls), (0, 0))
+        self.assertEqual(st.deferred, 0)
         self.assertEqual([m["chat_id"] for m in self.sent], ["222"])
         self.assertIn("Aynı donanımdaki 6 güncel ilanın ortası", self.sent[0]["text"])
 
 
 class DealerMarketProfitTests(PipelineBase):
     DEALER = {"dealers": [{"id": "d", "chat_id": "42", "market_check": True, "market_discount_pct": 5,
-                           "market_min_profit_tl": 100_000, "perplexity_fallback": False,
+                           "market_min_profit_tl": 100_000,
                            "rules": [{"brand": "Renault", "model": "Megane"}]}]}
 
-    async def test_needs_100k_tl_below_live_peers_and_no_perplexity(self):
+    async def test_needs_100k_tl_below_live_peers(self):
         FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 12)]
         FakeScraper.pages[self.URL] = [listing(1, 880_000),    # %12 ve 120 bin TL: geçer
                                        listing(2, 920_000)]    # %8 ama 80 bin TL: geçmez
         async with self.Session() as s:
             await self.cycle(s, modes=("dealer",), dealers=parse_dealers(self.DEALER), bench_cfg=BenchConfig(min_comparables=10))
-        self.assertEqual((len(self.sent), self.pplx_calls), (1, 0))
+        self.assertEqual(len(self.sent), 1)
         self.assertIn("880.000 TL", self.sent[0]["text"])
         self.assertIn("120.000 TL altında", self.sent[0]["text"])
 
@@ -304,10 +293,10 @@ class DealerMarketProfitTests(PipelineBase):
         self.assertEqual(len(self.sent), 1)
 
     async def test_no_comparable_peers_means_no_message(self):
-        FakeScraper.pages[self.URL] = [listing(1, 500_000)]    # emsal yok, Perplexity kapalı: mesaj yok, hata da yok
+        FakeScraper.pages[self.URL] = [listing(1, 500_000)]    # emsal yok: mesaj yok, hata da yok
         async with self.Session() as s:
             st = await self.cycle(s, modes=("dealer",), dealers=parse_dealers(self.DEALER), bench_cfg=BenchConfig(min_comparables=10))
-        self.assertEqual((len(self.sent), st.deferred, self.pplx_calls), (0, 0, 0))
+        self.assertEqual((len(self.sent), st.deferred), (0, 0))
 
 
 class LowerQuartileTests(PipelineBase):
@@ -326,7 +315,7 @@ class LowerQuartileTests(PipelineBase):
 
 class DealerUrgentTests(PipelineBase):
     DEALER = {"dealers": [{"id": "d", "chat_id": "42", "market_check": True, "market_discount_pct": 5,
-                           "market_min_profit_tl": 100_000, "perplexity_fallback": False,
+                           "market_min_profit_tl": 100_000,
                            "urgent_words": ["acil", "kelepir", "acilinden"],
                            "rules": [{"brand": "Renault", "model": "Megane"}]}]}
 

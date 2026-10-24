@@ -1,7 +1,7 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime, ForeignKey, Index, Text, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime, Index, Text, UniqueConstraint
 from src.database import Base
+
 
 class Proxy(Base):
     __tablename__ = "proxies"
@@ -11,6 +11,7 @@ class Proxy(Base):
     success_count = Column(Integer, default=0)
     failure_count = Column(Integer, default=0)
     last_used_at = Column(DateTime, nullable=True)
+
 
 class Listing(Base):
     __tablename__ = "listings"
@@ -31,38 +32,17 @@ class Listing(Base):
 
     __table_args__ = (Index('ix_listing_bmy', 'brand', 'model', 'year'),)
 
-class MarketStats(Base):
-    __tablename__ = "market_stats"
-    id = Column(Integer, primary_key=True, index=True)
-    brand = Column(String, nullable=False)
-    model = Column(String, nullable=False)
-    year = Column(Integer, nullable=False)
-    average_price = Column(Float, nullable=False)
-    sample_size = Column(Integer, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-class Opportunity(Base):
-    __tablename__ = "opportunities"
-    id = Column(Integer, primary_key=True, index=True)
-    listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False, unique=True)
-    market_average_price = Column(Float, nullable=False)
-    deviation_percentage = Column(Float, nullable=False)
-    status = Column(String, nullable=False, default="NEW") # NEW, NOTIFIED, DISQUALIFIED, EXPIRED
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    listing = relationship("Listing")
-
 
 class Alert(Base):
     """Giden Telegram mesajları (outbox). Gönderim başarısız olursa bir sonraki döngüde tekrar denenir."""
     __tablename__ = "alerts"
     id = Column(Integer, primary_key=True, index=True)
     source_listing_id = Column(String, nullable=False, index=True)
-    mode = Column(String, nullable=False)          # market | dealer
+    mode = Column(String, nullable=False)          # compare | dealer
     dealer_id = Column(String, nullable=False, default="")
     chat_id = Column(String, nullable=False)
     text = Column(Text, nullable=False)
-    reason = Column(String, nullable=False, default="")
+    reason = Column(String, nullable=False, default="")   # "★ " ile başlıyorsa güçlü fırsat
     status = Column(String, nullable=False, default="PENDING")  # PENDING, SENT, FAILED
     attempts = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -71,19 +51,19 @@ class Alert(Base):
     __table_args__ = (UniqueConstraint("source_listing_id", "mode", "dealer_id", name="uq_alert_target"),)
 
 
-class PriceCache(Base):
-    """Perplexity piyasa fiyatı sonuçları (maliyet ve rate-limit için)."""
-    __tablename__ = "price_cache"
+class Feedback(Base):
+    """Galericinin mesajdaki 👍/👎 düğmesine verdiği cevap. Alert başına tek oy (sonuncusu geçerli)."""
+    __tablename__ = "feedback"
     id = Column(Integer, primary_key=True, index=True)
-    cache_key = Column(String, unique=True, nullable=False, index=True)
-    average = Column(Float, nullable=False)
-    low = Column(Float, nullable=True)
-    high = Column(Float, nullable=True)
-    fetched_at = Column(DateTime, default=datetime.utcnow)
+    alert_id = Column(Integer, nullable=False, unique=True, index=True)
+    dealer_id = Column(String, nullable=False, default="")
+    chat_id = Column(String, nullable=False)
+    vote = Column(Integer, nullable=False)          # 1 = beğendim, 0 = beğenmedim
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class BotState(Base):
-    """Küçük anahtar-değer deposu: sağlık sayaçları, uyarı soğuma süreleri."""
+    """Küçük anahtar-değer deposu: sağlık sayaçları, uyarı soğuma süreleri, günlük işaretler."""
     __tablename__ = "bot_state"
     key = Column(String, primary_key=True)
     value = Column(Text, nullable=False, default="")
@@ -100,7 +80,7 @@ class BenchCache(Base):
 
 
 class CompareCandidate(Base):
-    """Karşılaştırma modunun aday havuzu: eşiği geçen ilanlar, düzenli aralıkla en iyisi gönderilir."""
+    """Genel modun aday havuzu: eşiği geçen ilanlar, düzenli aralıkla en iyisi gönderilir."""
     __tablename__ = "compare_candidates"
     id = Column(Integer, primary_key=True, index=True)
     source_listing_id = Column(String, unique=True, nullable=False, index=True)

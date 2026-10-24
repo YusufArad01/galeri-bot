@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.benchmark import Benchmark
 from src.models.domain import BotState, CompareCandidate
-from src.modes.market import MIN_VALID_PRICE, discount_pct, fmt_pct, fmt_tl, listing_block
+from src.messages import MIN_VALID_PRICE, discount_pct, fmt_pct, fmt_tl, listing_block
 from src.notifications import enqueue_alert
 
 # Boya/değişen payı: benzer ilanlar çoğunlukla temiz, hasarlı ilan doğal olarak ucuz. Veriyle ölçülmedi, tahmini
