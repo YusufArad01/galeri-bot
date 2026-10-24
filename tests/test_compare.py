@@ -310,6 +310,27 @@ class DealerMarketProfitTests(PipelineBase):
         self.assertEqual((len(self.sent), st.deferred, self.pplx_calls), (0, 0, 0))
 
 
+class DealerUrgentTests(PipelineBase):
+    DEALER = {"dealers": [{"id": "d", "chat_id": "42", "market_check": True, "market_discount_pct": 5,
+                           "market_min_profit_tl": 100_000, "perplexity_fallback": False,
+                           "urgent_words": ["acil", "kelepir", "acilinden"],
+                           "rules": [{"brand": "Renault", "model": "Megane"}]}]}
+
+    async def test_urgent_title_goes_without_price_condition(self):
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 12)]
+        FakeScraper.pages[self.URL] = [
+            listing(1, 990_000, title="Sahibinden Renault Megane ACİL SATILIK 2018 Model"),   # fiyat farkı yok ama acil: gider
+            listing(2, 990_000, title="Sahibinden Renault Megane 2018 Model"),                 # sıradan: gitmez
+            listing(3, 990_000, title="Renault Megane acilen kelepir"),                         # acilen listede yok, kelepir var: gider
+            listing(4, 990_000, title="Renault Megane tesacil 2018")]                           # sözcük içinde geçiyor: gitmez
+        async with self.Session() as s:
+            await self.cycle(s, modes=("dealer",), dealers=parse_dealers(self.DEALER), bench_cfg=BenchConfig(min_comparables=10))
+        texts = " ".join(m["text"] for m in self.sent)
+        self.assertEqual(len(self.sent), 2)
+        self.assertIn("🚨 Başlıkta \"acil\" geçiyor", texts)
+        self.assertIn("🚨 Başlıkta \"kelepir\" geçiyor", texts)
+
+
 class FilteredUrlTests(PipelineBase):
     def test_year_and_km_filter_added(self):
         from src.benchmark import filtered_url

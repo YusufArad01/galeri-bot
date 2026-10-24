@@ -8,6 +8,7 @@ ilanlar galericinin kendi Telegram sohbetine gönderilir. Galerici isterse ayrı
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -119,6 +120,7 @@ class Dealer:
     perplexity_fallback: bool = True     # False: aynı donanımda yeterli emsal yoksa piyasa kontrolü atlanır (Perplexity tahmini kullanılmaz)
     allow_damaged: bool = False
     active: bool = True
+    urgent_words: tuple[str, ...] = ()   # başlıkta geçerse fiyat şartı aranmaz, kurala uyan ilan direkt gider (acil satılık, kelepir...)
     blacklist: tuple[str, ...] = ()   # ilan başlığı/açıklamasında geçerse elenir ("yok" ile olumsuzlananlar sayılmaz)
 
 
@@ -136,6 +138,15 @@ def blacklisted(text: str, words: tuple[str, ...]) -> str | None:
             if not any(n in tail for n in _NEGATIONS):
                 return w
             pos = f.find(key, pos + 1)
+    return None
+
+
+def urgent_hit(title: str, words: tuple[str, ...]) -> str | None:
+    """Başlıkta (açıklamada değil: arabam şablon açıklamalarında 'fırsat' geçer) tam sözcük olarak geçen acil/kelepir ifadesi."""
+    f = fold(title)
+    for w in words:
+        if re.search(r"(?<![a-z0-9])" + re.escape(fold(w)) + r"(?![a-z0-9])", f):
+            return w
     return None
 
 
@@ -211,6 +222,7 @@ def parse_dealers(raw: dict | list) -> list[Dealer]:
             allow_damaged=bool(d.get("allow_damaged", False)),
             active=bool(d.get("active", True)),
             blacklist=tuple(str(x) for x in (d.get("blacklist") or [])),
+            urgent_words=tuple(str(x) for x in (d.get("urgent_words") or [])),
         ))
     return dealers
 
@@ -265,6 +277,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
 
         target_hits = [r for r in matched if r.max_price is not None and price <= r.max_price]
 
+        urgent = urgent_hit(data.get("title", ""), dealer.urgent_words)
         est: PriceEstimate | None = None
         source = ""   # piyasa değerinin kaynağı: karşılaştırma düzeyi ya da "tahmin"
         market_hit = False
@@ -280,7 +293,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
                                                 data["year"], data.get("km") or 0)
                     source = "Piyasa ort. (tahmin)"
             except PriceServiceError as exc:
-                if not target_hits:
+                if not target_hits and not urgent:
                     deferred = deferred or exc
                     continue
                 market_err = exc
@@ -289,7 +302,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
                 floor = min(floors) if floors else dealer.market_min_profit_tl
                 market_hit = discount_pct(price, est.average) >= dealer.market_discount_pct and                     est.average - price >= floor
 
-        if not target_hits and not market_hit:
+        if not target_hits and not market_hit and not urgent:
             continue
 
         lines = [f"🏪 {dealer.name} — uygun ilan bulundu", "", listing_block(data), "", f"💰 İlan: {fmt_tl(price)} TL"]
@@ -299,6 +312,9 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
             if r.baseline:
                 lines.append(f"📐 Baz fiyat {fmt_tl(r.baseline)} TL → ilan %{fmt_pct(discount_pct(price, r.baseline))} altında")
             reasons.append(f"hedef {r.label()} ≤ {fmt_tl(r.max_price)}")
+        if urgent:
+            lines.append(f"🚨 Başlıkta \"{urgent}\" geçiyor: satıcı acil satmak istiyor, pazarlık payı olabilir.")
+            reasons.append(f"acil: {urgent}")
         if est and est.average > 0:
             pct = discount_pct(price, est.average)
             tag = "✅" if market_hit else "ℹ️"
