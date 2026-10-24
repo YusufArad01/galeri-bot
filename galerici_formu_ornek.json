@@ -1,0 +1,19 @@
+{
+  "galerici": {"id": "ornek-galeri", "ad": "Örnek Oto Galeri", "telegram": ""},
+  "varsayilan": {"min_kar_tl": 100000, "alt_yuzde": 3},
+  "kurallar": [
+    {
+      "marka": "Volkswagen", "model": "Passat", "yil": [2015, 2017],
+      "motor": "1.6 TDI", "donanim": "Comfortline|Highline", "vites": "DSG",
+      "haric_kelimeler": ["variant"],
+      "degisen_en_fazla": 0, "boya_en_fazla": 2, "boya_yerleri": ["çamurluk", "kapı"],
+      "yasak_parcalar": ["tavan"], "tramer_en_fazla": 10000,
+      "fiyat_modeli": {
+        "ref_yil": 2016,
+        "bantlar": [[110, 125, 1620, 1750], [140, 155, 1480, 1580], [170, 190, 1380, 1480], [200, 260, 1300, 1420]],
+        "yil_basina_yuzde": 3.5, "boyali_parca_tl": 35000, "dogu_dusus_tl": 115000,
+        "primler": [{"kelimeler": ["highline", "r-line"], "tl": 140000}, {"kelimeler": ["cam tavan", "panoramik"], "tl": 100000}]
+      }
+    }
+  ]
+}

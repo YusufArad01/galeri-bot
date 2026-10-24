@@ -374,11 +374,11 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
             floors = rule.market_min_profit_tl or dealer.market_min_profit_tl
             gap = expected - price
             market_hit = gap >= floors and (not p25 or price <= p25)   # galerici bandı karar verir, emsal alt çeyreği veto eder
-            model_note = f"📐 Galerici fiyat modeli: referans {fmt_tl(expected)} TL (km, yıl, boya, bölge, donanım düzeltmeli) → ilan {fmt_tl(abs(gap))} TL {'altında' if gap >= 0 else 'üstünde'}"
+            model_note = f"📐 Fiyat modeli: referans {fmt_tl(expected)} TL → ilan {fmt_tl(abs(gap))} TL {'altında' if gap >= 0 else 'üstünde'}"
         if not target_hits and not market_hit and not urgent:
             continue
 
-        lines = [f"🏪 {dealer.name} — uygun ilan bulundu", "", listing_block(data), "", f"💰 İlan: {fmt_tl(price)} TL"]
+        lines = [f"🏪 {dealer.name} — uygun ilan", "", listing_block(data), "", f"💰 İlan: {fmt_tl(price)} TL"]
         reasons = []
         for r in target_hits[:2]:
             lines.append(f"🎯 Hedef: {r.label()} ≤ {fmt_tl(r.max_price)} TL → {fmt_tl(r.max_price - price)} TL altında")
@@ -392,8 +392,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
             reasons.append(f"acil: {urgent}")
         if est and est.average > 0:
             pct = discount_pct(price, est.average)
-            tag = "✅" if market_hit else "ℹ️"
-            lines.append(f"📊 {tag} {source}: {fmt_tl(est.average)} TL (ilan %{fmt_pct(pct)} / {fmt_tl(abs(est.average - price))} TL {'altında' if pct >= 0 else 'üstünde'})")
+            lines.append(f"📊 {source}: {fmt_tl(est.average)} TL (ilan %{fmt_pct(pct)} / {fmt_tl(abs(est.average - price))} TL {'altında' if pct >= 0 else 'üstünde'})")
             if market_hit:
                 reasons.append(f"piyasa -%{fmt_pct(pct)}")
         elif market_err is not None:
@@ -406,7 +405,6 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
 
         chat_id = dealer.chat_id or fallback_chat_id
         if not dealer.chat_id:
-            lines.insert(0, f"[{dealer.id}: chat_id tanımlı değil, yönetici sohbetine gönderildi]")
             logger.warning(f"Galerici {dealer.id} için chat_id yok; bildirim yönetici sohbetine gidiyor.")
         out.append(Candidate("dealer", dealer.id, chat_id, " + ".join(reasons), "\n".join(lines)))
     return out, deferred
