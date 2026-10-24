@@ -147,6 +147,14 @@ class TargetTests(PipelineBase):
             "https://tr.vava.cars/buy/cars"])
         self.assertEqual(len(build_targets(["https://www.arabam.com/x"], [], {"market"})), 1)
 
+    def test_dealer_pages_come_first_and_go_deeper(self):
+        from src.pipeline import build_targets
+        d = parse_dealers({"dealers": [{"id": "d", "rules": [{"brand": "VW", "max_price": 1, "search_url": "https://www.arabam.com/ikinci-el/otomobil/vw-passat"}]}]})
+        t = build_targets(["https://www.arabam.com/ikinci-el/otomobil"], d, {"compare", "dealer"}, pages=2, dealer_pages=4)
+        self.assertEqual(len(t), 4 + 2)
+        self.assertTrue(t[0].startswith("https://www.arabam.com/ikinci-el/otomobil/vw-passat"))
+        self.assertTrue(t[-1].endswith("page=2"))
+
 
 class ReleaseTests(PipelineBase):
     def lists(self):

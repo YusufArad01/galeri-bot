@@ -37,15 +37,18 @@ def normalize_target(url: str) -> str:
 
 
 def build_targets(target_urls: list[str], dealers: list[dealer_mode.Dealer], modes: set[str],
-                  pages: int = 1) -> list[str]:
-    urls = list(target_urls)
-    if "dealer" in modes:
-        urls += dealer_mode.search_urls(dealers)
+                  pages: int = 1, dealer_pages: int = 0) -> list[str]:
+    """Galerici arama sayfaları ÖNCE gelir (turun ilan hakkı önce onlara harcanır), genel liste sonra.
+    Galerici sayfaları daha derin taranır (dealer_pages): ilk turda mevcut stok topluca taranır,
+    sonraki turlarda bilinen ilanlar atlandığı için yalnız yeniler açılır."""
+    dealer_urls = dealer_mode.search_urls(dealers) if "dealer" in modes else []
+    wanted = [(u, dealer_pages or pages) for u in dealer_urls] + [(u, pages) for u in target_urls]
     out: list[str] = []
-    for url in dict.fromkeys(normalize_target(u) for u in urls):
+    for raw, depth in wanted:
+        url = normalize_target(raw)
         out.append(url)
         if "vava.cars" not in url and "page=" not in url:
-            out += [f"{url}&page={n}" for n in range(2, pages + 1)]
+            out += [f"{url}&page={n}" for n in range(2, depth + 1)]
     return list(dict.fromkeys(out))
 
 

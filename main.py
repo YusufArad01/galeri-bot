@@ -61,7 +61,8 @@ async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], deale
         if dealer_error:
             await health.notify_admin("dealer_cfg", f"⚠️ Galerici profil dosyası okunamadı, son geçerli ayarla devam ediliyor:\n{dealer_error}", cooldown_hours=12)
 
-        targets = build_targets(settings.target_urls, dealers, settings.modes, settings.PAGES_PER_TARGET)
+        targets = build_targets(settings.target_urls, dealers, settings.modes, settings.PAGES_PER_TARGET,
+                                settings.DEALER_PAGES)
         if not targets:
             logger.error("TARGET_URL tanımlı değil (ve galerici kurallarında search_url yok).")
             await health.notify_admin("no_target", "⚠️ TARGET_URL tanımlı değil; taranacak sayfa yok.", cooldown_hours=12)
