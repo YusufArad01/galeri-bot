@@ -1,5 +1,6 @@
 """Ayarlar. Varsayılanlar CANLI değerlerdir: Railway'de yalnız gizli bilgiler ve ortama özel olanlar tanımlı olmalı
-(TELEGRAM_*, PROXY_URL, DEALERS_JSON, TARGET_URL, DB_PATH, HEADLESS, BROWSER_CHANNEL). Başka bir değişken kodu ezer."""
+(TELEGRAM_*, PROXY_URL, DEALERS_JSON, TARGET_URL, DB_PATH, HEADLESS, BROWSER_CHANNEL, PERPLEXITY_API_KEY).
+Başka bir değişken kodu ezer."""
 from pydantic_settings import BaseSettings
 
 
@@ -35,6 +36,15 @@ class Settings(BaseSettings):
     COMPARE_KM_TOLERANCE_PCT: float = 30.0
     BENCH_TTL_HOURS: float = 6.0             # aynı emsal sayfası bu süre yeniden açılmaz
     BENCH_MAX_FETCH_PER_CYCLE: int = 25      # bir turda açılacak en çok emsal sayfası
+
+    # --- İnternet taraması tahmini (Perplexity) - YEDEK -------------------------
+    # Yalnız arabam'da yeterli (COMPARE_MIN_COMPARABLES) aynı donanım emsali yoksa sorulur. Anahtar boşsa kapalı.
+    PERPLEXITY_API_KEY: str = ""
+    PERPLEXITY_MODEL: str = "sonar-pro"
+    PERPLEXITY_CACHE_DAYS: int = 7           # aynı araç tipi/yıl/km dilimi için tahmin bu süre yeniden sorulmaz
+    PERPLEXITY_MAX_CALLS_PER_CYCLE: int = 15 # bir turda en çok sorgu (maliyet sınırı)
+    ESTIMATE_MIN_DISCOUNT_PCT: float = 25.0  # ilan tahminden en az bu kadar ucuz olmalı
+    ESTIMATE_MAX_DISCOUNT_PCT: float = 40.0  # bundan fazlası çoğunlukla tahmin hatası: aday olmaz
 
     # --- Hasar filtresi (genel mod için izin verilen en fazla) ---------------
     MAX_DEGISEN: int = 2

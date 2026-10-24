@@ -6,11 +6,12 @@ from datetime import datetime, timedelta
 from loguru import logger
 from sqlalchemy import delete
 
-from src.models.domain import Alert, BenchCache, BotState, CompareCandidate, Feedback, Listing
+from src.models.domain import Alert, BenchCache, BotState, CompareCandidate, EstimateCache, Feedback, Listing
 
 # Mesajlar 180 gün tutulur: tekrar gönderimi (mükerrer engeli) bu süre boyunca korur. İlanlar 90 gün.
 _RULES = (
     (BenchCache, BenchCache.fetched_at, timedelta(days=2)),
+    (EstimateCache, EstimateCache.fetched_at, timedelta(days=14)),   # tahmin önbelleği 7 gün geçerli, 14'te silinir
     (CompareCandidate, CompareCandidate.created_at, timedelta(days=2)),
     (Listing, Listing.scraped_at, timedelta(days=90)),
     (Feedback, Feedback.created_at, timedelta(days=180)),

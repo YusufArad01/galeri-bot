@@ -20,6 +20,7 @@ from src.parsing import tokens
 
 MIN_PRICE = 50_000.0
 LEVELS = ["Aynı donanımdaki", "Aynı motordaki", "Aynı modeldeki"]  # bench_urls sırasıyla (özelden genele)
+ESTIMATE_LEVEL = "İnternet taraması tahmini"
 
 
 class BenchBudget(Exception):
@@ -41,6 +42,10 @@ class BenchConfig:
     year_adjust_pct_per_year: float = 3.5
     ttl_hours: float = 6.0
     max_fetch_per_cycle: int = 8
+    # İnternet taraması tahmini (yedek) kararı: ilan tahminden en az bu kadar, en çok şu kadar ucuz olmalı.
+    # Üst sınır: aşırı ucuz görünmek çoğunlukla tahminin hatalı olduğunu gösterir (eski araçlarda ölçümde uç değerler çıktı).
+    est_min_discount_pct: float = 25.0
+    est_max_discount_pct: float = 40.0
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,7 @@ class BenchResult:
     level: str
     url: str
     p25: float = 0.0   # emsallerin en ucuz çeyreğinin sınırı (km/yıl düzeltmeli); 0 = bilinmiyor
+    estimated: bool = False   # True: arabam emsali yetmedi, değer internet taraması tahmini (median = tahmin)
 
 
 def filtered_url(url: str, year: int, km: int, year_tol: int, km_pct: float) -> str:
@@ -78,10 +84,11 @@ def _km_close(a: int, b: int, pct: float) -> bool:
 
 
 class Benchmark:
-    def __init__(self, session: AsyncSession, scraper, cfg: BenchConfig):
+    def __init__(self, session: AsyncSession, scraper, cfg: BenchConfig, estimator=None):
         self.session = session
         self.scraper = scraper
         self.cfg = cfg
+        self.estimator = estimator   # src.estimate.PriceService; yalnız arabam'da yeterli emsal yoksa sorulur
         self.fetched = 0       # bu döngüde açılan sayfa
         self.cache_hits = 0
         self.empty_pages = 0   # sayfa açıldı ama satır gelmedi (engel/yapı değişikliği belirtisi)
@@ -124,8 +131,9 @@ class Benchmark:
             factor += self.cfg.year_adjust_pct_per_year / 100.0 * (year - peer_year)
         return price * min(1.3, max(0.7, factor))
 
-    async def stats(self, data: dict) -> BenchResult | None:
-        """En özel sayfadan başlayıp yeterli benzer ilan bulunan ilk düzeyin medyanı."""
+    async def stats(self, data: dict, allow_estimate: bool = True) -> BenchResult | None:
+        """En özel sayfadan başlayıp yeterli benzer ilan bulunan ilk düzeyin medyanı. Hiçbir düzeyde yeterli
+        emsal yoksa (ve site engelli değilse) internet taraması tahmini (estimated=True) döner; o da yoksa None."""
         year, km = data.get("year") or 0, data.get("km") or 0
         trim = tokens(data.get("trim"))
         for level, url in list(zip(LEVELS, data.get("bench_urls") or []))[: self.cfg.levels]:
@@ -141,4 +149,9 @@ class Benchmark:
             ]
             if len(comps) >= self.cfg.min_comparables:
                 return BenchResult(float(statistics.median(comps)), len(comps), level, url, _quantile(comps, 0.25))
+        # Engelde liste sayfaları boş gelir: bu "nadir araç" değil "bilinmiyor" demektir, tahmin sorulmaz
+        if allow_estimate and self.estimator is not None and not getattr(self.scraper, "last_blocked", False):
+            avg = await self.estimator.estimate(data)
+            if avg:
+                return BenchResult(float(avg), 0, ESTIMATE_LEVEL, "", 0.0, estimated=True)
         return None

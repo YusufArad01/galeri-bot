@@ -5,6 +5,7 @@ from loguru import logger
 from src.benchmark import BenchConfig
 from src.config import settings
 from src.database import engine, Base, AsyncSessionLocal
+from src.estimate import PriceService
 from src.feedback import poll_forever
 from src.health import CycleStats, Health
 from src.maintenance import prune
@@ -43,6 +44,9 @@ def describe_mode(dealers: list[dealer_mode.Dealer]) -> str:
         lines.append(f"• Genel: benzerlerinden en az %{settings.COMPARE_MIN_DISCOUNT_PCT:g} ucuz adaylardan "
                      f"{settings.COMPARE_RELEASE_MINUTES} dk'da bir en iyi {settings.COMPARE_MAX_ITEMS}, günde en çok "
                      f"{settings.COMPARE_DAILY_MAX} ({settings.COMPARE_ACTIVE_START}:00-{settings.COMPARE_ACTIVE_END}:00)")
+    if settings.PERPLEXITY_API_KEY:
+        lines.append(f"• İnternet tahmini yedeği açık: arabam'da emsal yoksa ilan tahminden %{settings.ESTIMATE_MIN_DISCOUNT_PCT:g}-"
+                     f"%{settings.ESTIMATE_MAX_DISCOUNT_PCT:g} ucuzsa 'tahmin' etiketiyle")
     lines.append(f"• Döngü: {settings.SCRAPE_INTERVAL_MINUTES} dk, en çok {settings.MAX_LISTINGS_PER_CYCLE} yeni ilan")
     return "\n".join(lines)
 
@@ -92,7 +96,12 @@ async def one_cycle(telegram: Telegram, dealers: list[dealer_mode.Dealer], deale
                         km_tolerance_pct=settings.COMPARE_KM_TOLERANCE_PCT,
                         ttl_hours=settings.BENCH_TTL_HOURS,
                         max_fetch_per_cycle=settings.BENCH_MAX_FETCH_PER_CYCLE,
+                        est_min_discount_pct=settings.ESTIMATE_MIN_DISCOUNT_PCT,
+                        est_max_discount_pct=settings.ESTIMATE_MAX_DISCOUNT_PCT,
                     ),
+                    estimator=PriceService(session, settings.PERPLEXITY_API_KEY, settings.PERPLEXITY_MODEL,
+                                           settings.PERPLEXITY_CACHE_DAYS, settings.PERPLEXITY_MAX_CALLS_PER_CYCLE)
+                    if settings.PERPLEXITY_API_KEY else None,
                 ),
                 timeout=settings.CYCLE_TIMEOUT_MINUTES * 60,
             )

@@ -124,11 +124,12 @@ class PipelineBase(unittest.IsolatedAsyncioTestCase):
         except OSError:  # Windows: aiosqlite iş parçacığı dosyayı biraz geç bırakabilir
             pass
 
-    async def cycle(self, session, *, modes=("dealer",), dealers=(), stats=None, compare=None, bench_cfg=None, targets=None):
+    async def cycle(self, session, *, modes=("dealer",), dealers=(), stats=None, compare=None, bench_cfg=None, targets=None,
+                    estimator=None):
         return await run_cycle(
             session=session, engine_factory=lambda pm: FakeScraper(pm), telegram=self.telegram,
             dealers=list(dealers), targets=targets or [self.URL], modes=set(modes), default_chat_id="ADMIN",
-            max_listings=40, jitter=(0, 0), stats=stats, compare=compare, bench_cfg=bench_cfg)
+            max_listings=40, jitter=(0, 0), stats=stats, compare=compare, bench_cfg=bench_cfg, estimator=estimator)
 
     async def count(self, session, model):
         return (await session.execute(select(func.count()).select_from(model))).scalar_one()

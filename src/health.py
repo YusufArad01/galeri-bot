@@ -35,6 +35,8 @@ class CycleStats:
     bench_pages: int = 0     # bu döngüde açılan karşılaştırma sayfası
     bench_empty: int = 0     # boş gelen karşılaştırma sayfası
     expertise_missing: int = 0   # ekspertiz bölümü okunamayan ilan (sayfa yapısı değişti göstergesi)
+    pplx_calls: int = 0      # internet taraması (Perplexity) sorgusu
+    pplx_error: str = ""     # son servis hatası türü: auth | quota | rate | http | network
     blocked: bool = False
     block_note: str = ""     # engelde siteden gelen sayfanın başlığı/metni (teşhis için)
     timed_out: bool = False
@@ -51,6 +53,7 @@ class Totals:
     alerts_sent: int = 0
     blocked_cycles: int = 0
     errors: int = 0
+    pplx_calls: int = 0
 
 
 class Health:
@@ -92,11 +95,17 @@ class Health:
         totals.alerts_queued += stats.alerts_queued
         totals.alerts_sent += stats.alerts_sent
         totals.errors += stats.scrape_errors
+        totals.pplx_calls += stats.pplx_calls
         if stats.blocked:
             totals.blocked_cycles += 1
 
         await self._check_blocked(stats)
         await self._check_page_structure(stats)
+        if stats.pplx_error in ("auth", "quota"):
+            await self.notify_admin(
+                "pplx", "🔮 Perplexity (internet tahmini) çalışmıyor: "
+                + ("API anahtarı geçersiz." if stats.pplx_error == "auth" else "bakiye bitmiş.")
+                + " Arabam emsali olmayan araçlarda tahmin yedeği devre dışı; diğer her şey normal.", cooldown_hours=12)
         if stats.timed_out:
             await self.notify_admin("timeout", "⏱️ Tarama döngüsü zaman aşımına uğradı ve iptal edildi. Sonraki döngüde tekrar denenecek.")
 
@@ -145,12 +154,17 @@ class Health:
         since = datetime.fromisoformat(t.since)
         votes = dict((await self.session.execute(
             select(Feedback.vote, func.count()).where(Feedback.created_at >= since).group_by(Feedback.vote))).all())
+        est_votes = dict((await self.session.execute(
+            select(Feedback.vote, func.count()).join(Alert, Alert.id == Feedback.alert_id)
+            .where(Feedback.created_at >= since, Alert.reason.contains("tahmin")).group_by(Feedback.vote))).all())
+        est_line = f" (tahminli mesajlar: 👍 {est_votes.get(1, 0)} / 👎 {est_votes.get(0, 0)})" if est_votes else ""
         text = (
             "📊 Günlük özet\n"
             f"• {t.cycles} tur, {t.scraped} yeni ilan incelendi\n"
             f"• 🔔 {t.alerts_sent} mesaj gönderildi ({t.alerts_queued} oluştu)\n"
-            f"• Geri bildirim: 👍 {votes.get(1, 0)} / 👎 {votes.get(0, 0)}\n"
-            f"• Engellenen tur: {t.blocked_cycles}, hata: {t.errors}\n"
+            f"• Geri bildirim: 👍 {votes.get(1, 0)} / 👎 {votes.get(0, 0)}{est_line}\n"
+            + (f"• 🔮 İnternet tahmini: {t.pplx_calls} sorgu\n" if t.pplx_calls else "")
+            + f"• Engellenen tur: {t.blocked_cycles}, hata: {t.errors}\n"
             "Mesaj gelmiyorsa ve burada hata yoksa: o sürede uygun ilan çıkmamıştır."
         )
         if not await self.telegram.send(self.admin_chat, text):

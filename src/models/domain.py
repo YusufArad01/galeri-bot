@@ -79,6 +79,15 @@ class BenchCache(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow)
 
 
+class EstimateCache(Base):
+    """İnternet taraması (Perplexity) fiyat tahmini önbelleği. average=0: 'bilmiyorum' cevabı (kısa süre tutulur)."""
+    __tablename__ = "estimate_cache"
+    id = Column(Integer, primary_key=True, index=True)
+    cache_key = Column(String, unique=True, nullable=False, index=True)
+    average = Column(Float, nullable=False)
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CompareCandidate(Base):
     """Genel modun aday havuzu: eşiği geçen ilanlar, düzenli aralıkla en iyisi gönderilir."""
     __tablename__ = "compare_candidates"

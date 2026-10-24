@@ -20,7 +20,14 @@ Türkçe form doldurulur, `galerici_ekle.py` profili üretir. Profil `DEALERS_JS
 ## Ayarlar
 Varsayılanlar CANLI değerlerdir (`src/config.py`, her satırda açıklama var). Railway'de yalnız şunlar tanımlı olmalı:
 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `PROXY_URL`, `DEALERS_JSON`, `TARGET_URL`, `DB_PATH=/data/arbitrage_db.sqlite`,
-`HEADLESS=false`, `BROWSER_CHANNEL=chrome`. Başka bir değişken kodu ezer; değiştirmek için koddaki varsayılanı değiştirin.
+`HEADLESS=false`, `BROWSER_CHANNEL=chrome`, `PERPLEXITY_API_KEY`. Başka bir değişken kodu ezer; değiştirmek için koddaki varsayılanı değiştirin.
+
+## İnternet tahmini yedeği (Perplexity)
+Yalnız arabam'da **10'dan az aynı donanım emsali** varsa (ve site engelli değilse) çalışır; galerici fiyat modeli, hedef fiyat ya da acil başlık
+zaten karar veriyorsa sorulmaz. Ilan tahminden **%25–%40** ucuzsa (galericide ayrıca TL tabanı) mesaj gider; mesajda 🔮 "tahmin, kesin değil" etiketi
+olur, genel modda adayın puanı %25 düşük sayılır. Cevaplar 7 gün (bilinmeyen 1 gün) önbellekte tutulur, turda en çok 15 sorgu.
+Anahtar boşsa kapalıdır. Ölçüm (25.10.2026, 13 araç): cevap verdiğinde arabam ortancasına yakın (tipik hata %5–8), ama soruların ~%25–55'ine cevap verir
+ve ilan satırı vermez; nadir araçta yuvarlak sayılar çıkar. 👍/👎 sayıları günlük özette "tahminli mesajlar" olarak ayrı görünür.
 
 ## Sağlık ve bakım
 - Yönetici sohbetine: açılış mesajı, günlük özet, engel/captcha uyarısı (+ düzelince ✅), zaman aşımı, sayfa yapısı değişti uyarısı

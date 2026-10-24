@@ -119,7 +119,8 @@ async def process_listing(data: dict, *, session: AsyncSession, stats: CycleStat
             if entry:
                 # her kıyas sonucu loga: günlük kaç ilan hangi eşiği geçerdi, buradan sayılır
                 logger.info(f"Kıyas {data['source_listing_id']}: fark %{entry.discount_pct:.1f} "
-                            f"({entry.median - float(data['price']):.0f} TL), {entry.comparables} benzer")
+                            f"({entry.median - float(data['price']):.0f} TL), "
+                            f"{'internet tahmini' if entry.estimated else str(entry.comparables) + ' benzer'}")
                 compare_out.append(entry)
         except BenchBudget as exc:
             deferred = deferred or exc
@@ -143,7 +144,8 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[ProxyMan
                     jitter: tuple[float, float] = (3.0, 7.0),
                     stats: CycleStats | None = None,
                     compare: compare_mode.CompareConfig | None = None,
-                    bench_cfg: BenchConfig | None = None) -> CycleStats:
+                    bench_cfg: BenchConfig | None = None,
+                    estimator=None) -> CycleStats:   # estimator: src.estimate.PriceService (arabam emsali yetmezse tahmin yedeği)
     # stats dışarıdan verilirse zaman aşımında bile o ana kadarki sayaçlar kaybolmaz
     if stats is None:
         stats = CycleStats()
@@ -186,7 +188,7 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[ProxyMan
 
         # galerici piyasa kontrolü de aynı emsal sayfalarını kullanır
         wants_bench = compare_on or "dealer" in modes
-        bench = Benchmark(session, scraper, bench_cfg or BenchConfig()) \
+        bench = Benchmark(session, scraper, bench_cfg or BenchConfig(), estimator) \
             if wants_bench and hasattr(scraper, "fetch_list_rows") else None
         ids = {link: scraper.source_id(link) for link in links}
         known = await known_ids(session, list(ids.values()))
@@ -236,6 +238,9 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[ProxyMan
         if bench is not None:
             stats.bench_pages += bench.fetched
             stats.bench_empty += bench.empty_pages
+        if estimator is not None:
+            stats.pplx_calls = estimator.calls
+            stats.pplx_error = estimator.last_error_kind
 
     if compare_on:
         await compare_mode.store_candidates(session, compare_entries, compare.min_discount_pct,

@@ -1,8 +1,8 @@
-"""Sürüm 3 - Karşılaştırma modu (Perplexity'siz).
+"""Karşılaştırma modu.
 
 Her turda yeni ilanlar filtrelerden (hasar, yaş/fiyat) geçirilir ve arabam'daki aynı
-donanım/motor/modeldeki güncel ilanların fiyat ortasıyla kıyaslanır. Eşiği geçenler aday
-havuzuna girer. Mesaj bombardımanı olmasın diye havuzdan düzenli aralıkla (varsayılan saatte
+donanımdaki güncel ilanların fiyat ortasıyla kıyaslanır (yeterli emsal yoksa yedek: internet taraması
+tahmini, sıkı eşikle ve "tahmin" etiketiyle). Eşiği geçenler aday havuzuna girer. Mesaj bombardımanı olmasın diye havuzdan düzenli aralıkla (varsayılan saatte
 bir) en iyi aday seçilip gönderilir; günlük üst sınır vardır (varsayılan 15).
 """
 from __future__ import annotations
@@ -56,6 +56,7 @@ class Entry:
     level: str
     discount_pct: float        # boya/değişen payı düşülmüş fark: sıralama ve eşik bununla yapılır
     raw_discount_pct: float = 0.0
+    estimated: bool = False    # True: median arabam emsali değil, internet taraması tahmini (eşik evaluate'te uygulandı)
 
 
 async def evaluate(data: dict, bench: Benchmark, max_km: int = 0, min_year: int = 0) -> Entry | None:
@@ -74,13 +75,18 @@ async def evaluate(data: dict, bench: Benchmark, max_km: int = 0, min_year: int 
         return None
     raw = discount_pct(price, res.median)
     penalty = PENALTY_PER_DEGISEN * (data.get("degisen") or 0) + PENALTY_PER_BOYALI * (data.get("boyali") or 0)
-    return Entry(data, res.median, res.comparables, res.level, raw - penalty, raw)
+    entry = Entry(data, res.median, res.comparables, res.level, raw - penalty, raw, res.estimated)
+    if res.estimated and not bench.cfg.est_min_discount_pct <= entry.discount_pct <= bench.cfg.est_max_discount_pct:
+        return None   # tahmin yalnız belirgin farkta (varsayılan %25-%40) fırsat sayılır
+    return entry
 
 
 def score(e: Entry) -> float:
-    """Sıralama puanı: fark büyüdükçe artar, ama SUSPICIOUS_PCT'yi aşınca düşer (aşırı ucuz = şüpheli)."""
+    """Sıralama puanı: fark büyüdükçe artar, ama SUSPICIOUS_PCT'yi aşınca düşer (aşırı ucuz = şüpheli).
+    Tahmine dayalı adaylar doğrulanmış arabam emsalinden sonra gelsin diye puanı %25 düşük sayılır."""
     d = e.discount_pct
-    return d if d <= SUSPICIOUS_PCT else max(0.0, 2 * SUSPICIOUS_PCT - d)
+    base = d if d <= SUSPICIOUS_PCT else max(0.0, 2 * SUSPICIOUS_PCT - d)
+    return base * 0.75 if e.estimated else base
 
 
 def damage_line(d: dict) -> str:
@@ -94,6 +100,17 @@ def damage_line(d: dict) -> str:
 
 def format_entry(e: Entry, pool: int, fresh_hours: float) -> str:
     d = e.data
+    if e.estimated:
+        return (
+            f"🔮 Tahmini fiyata göre %{fmt_pct(e.discount_pct)} ucuz (kesin değil)\n\n"
+            f"{listing_block(d)}\n\n"
+            f"💰 İlan: {fmt_tl(d['price'])} TL\n"
+            f"🔮 İnternet taraması tahmini: {fmt_tl(e.median)} TL (arabam'da kıyaslanacak yeterli aynı donanım yok)\n"
+            f"📉 Fark: {fmt_tl(e.median - float(d['price']))} TL (%{fmt_pct(e.raw_discount_pct)})"
+            f"{damage_line(d)}\n"
+            f"⚠️ Bu bir tahmindir, fiyat doğrulanamadı: ilanı iyi kontrol edin.\n\n"
+            f"(Son {fresh_hours:g} saatte {pool} aday arasından en iyisi)\n🔗 {d['url']}"
+        )
     warn = ""
     if e.discount_pct >= SUSPICIOUS_PCT:
         warn = "\n⚠️ Çok yüksek fark: kilometre/donanım farkı veya fiyat hatası olabilir, ilanı iyi kontrol edin."
@@ -114,7 +131,10 @@ def format_entry(e: Entry, pool: int, fresh_hours: float) -> str:
 # --------------------------------------------------------------------------- #
 def passes(e: Entry, min_discount: float, max_discount: float = 0.0, min_profit_tl: int = 0,
            min_profit_pct: float = 0.0) -> bool:
-    """Yüzde eşiği YA DA (TL kâr eşiği VE alt yüzde); her iki durumda da üst sınırın altında."""
+    """Yüzde eşiği YA DA (TL kâr eşiği VE alt yüzde); her iki durumda da üst sınırın altında.
+    Tahmine dayalı adayın eşiği evaluate'te (tahmin penceresi) uygulandı."""
+    if e.estimated:
+        return True
     if max_discount and e.discount_pct > max_discount:
         return False
     if e.discount_pct >= min_discount:
@@ -134,7 +154,7 @@ async def store_candidates(session: AsyncSession, entries: list[Entry], min_disc
             continue
         payload = json.dumps({"data": {k: e.data.get(k) for k in _SHOWN}, "median": e.median,
                               "comparables": e.comparables, "level": e.level, "discount_pct": e.discount_pct,
-                              "raw_discount_pct": e.raw_discount_pct},
+                              "raw_discount_pct": e.raw_discount_pct, "estimated": e.estimated},
                              ensure_ascii=False)
         session.add(CompareCandidate(source_listing_id=sid, score=score(e), payload=payload))
         added += 1
@@ -145,7 +165,7 @@ async def store_candidates(session: AsyncSession, entries: list[Entry], min_disc
 def _from_payload(raw: str) -> Entry:
     p = json.loads(raw)
     return Entry(p["data"], p["median"], p["comparables"], p["level"], p["discount_pct"],
-                 p.get("raw_discount_pct", p["discount_pct"]))
+                 p.get("raw_discount_pct", p["discount_pct"]), p.get("estimated", False))
 
 
 async def release(session: AsyncSession, cfg: CompareConfig, chat_id: str, now: datetime | None = None) -> int:
@@ -177,7 +197,7 @@ async def release(session: AsyncSession, cfg: CompareConfig, chat_id: str, now: 
         alert = await enqueue_alert(
             session, source_listing_id=cand.source_listing_id, mode="compare", dealer_id="",
             chat_id=chat_id, text=format_entry(entry, len(pool), cfg.fresh_hours),
-            reason=f"benzerlerinden -%{entry.discount_pct:.1f}")
+            reason=f"{'tahmin' if entry.estimated else 'benzerlerinden'} -%{entry.discount_pct:.1f}")   # "tahmin" oy sayımını ayırır
         cand.status, cand.released_at = "RELEASED", now
         if alert is not None:
             queued += 1
