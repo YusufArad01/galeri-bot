@@ -22,6 +22,10 @@ from src.proxy.manager import ProxyManager
 
 _LISTING_COLUMNS = {c.name for c in Listing.__table__.columns} - {"id", "scraped_at"}
 _FATAL_PRICE_KINDS = {"no_key", "auth", "quota", "breaker"}
+# Açılamayan ilan (kaldırılmış/satılmış) her turda yeniden denenip hata yazmasın: 3 başarısızlıktan sonra atlanır.
+# shortcut: yalnız bellekte, yeniden başlatmada sıfırlanır (3 deneme daha yapılır); kalıcı olması gerekirse DB'ye taşı.
+_SCRAPE_FAILS: dict[str, int] = {}
+_MAX_SCRAPE_FAILS = 3
 
 
 def normalize_target(url: str) -> str:
@@ -174,6 +178,8 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
             logger.info(f"{len(new_links)} yeni ilan, {len(links) - len(new_links)} zaten bilinen.")
 
             for link in new_links[:budget]:
+                if _SCRAPE_FAILS.get(link, 0) >= _MAX_SCRAPE_FAILS:
+                    continue
                 if not first_fetch:
                     await asyncio.sleep(random.uniform(*jitter))
                 first_fetch = False
@@ -181,8 +187,10 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                     data = await scraper.fetch_listing_data(link)
                 except Exception as exc:
                     stats.scrape_errors += 1
+                    _SCRAPE_FAILS[link] = _SCRAPE_FAILS.get(link, 0) + 1
                     logger.error(f"Failed to scrape {link}: {exc}")
                     continue
+                _SCRAPE_FAILS.pop(link, None)
                 stats.scraped += 1
                 logger.info(f"Scraped: {data['brand']} {data['model']} {data.get('trim', '')} {data['year']} "
                             f"{data['km']}km {data['price']:.0f}TL ({data['city']})")

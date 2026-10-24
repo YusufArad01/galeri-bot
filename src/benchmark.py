@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.domain import BenchCache
+from src.parsing import tokens
 from src.pricing.perplexity import PriceServiceError
 
 MIN_PRICE = 50_000.0
@@ -118,12 +119,15 @@ class Benchmark:
     async def stats(self, data: dict) -> BenchResult | None:
         """En özel sayfadan başlayıp yeterli benzer ilan bulunan ilk düzeyin medyanı."""
         year, km = data.get("year") or 0, data.get("km") or 0
+        trim = tokens(data.get("trim"))
         for level, url in list(zip(LEVELS, data.get("bench_urls") or []))[: self.cfg.levels]:
             if year:
                 url = filtered_url(url, year, km, self.cfg.year_tolerance, self.cfg.km_tolerance_pct)
             comps = [
                 self._adjust(r["price"], r["km"], km, r["year"], year) for r in await self.rows(url)
                 if r["id"] != data["source_listing_id"] and r["price"] >= MIN_PRICE
+                # motor düzeyinde farklı donanımlar karışır (Ambition ile Style arası %20+ fark): yalnız aynı donanım adı
+                and (not trim or trim <= tokens(r.get("name")))
                 and abs(r["year"] - year) <= self.cfg.year_tolerance
                 and _km_close(km, r["km"], self.cfg.km_tolerance_pct)
             ]

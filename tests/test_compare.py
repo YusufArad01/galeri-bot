@@ -20,7 +20,7 @@ CRUMBS = ["/ikinci-el/otomobil/renault", "/ikinci-el/otomobil/renault-megane",
 
 
 def row(i, price, year=2018, km=100000):
-    return {"id": f"r{i}", "url": f"https://www.arabam.com/ilan/x/r{i}", "name": "n", "title": "t",
+    return {"id": f"r{i}", "url": f"https://www.arabam.com/ilan/x/r{i}", "name": "Renault Megane 1.5 dCi Touch", "title": "t",
             "year": year, "km": km, "price": float(price), "city": "Izmir"}
 
 
@@ -301,6 +301,19 @@ class ProfitRuleTests(PipelineBase):
     async def test_cheap_car_small_tl_gap_needs_percent(self):
         FakeScraper.lists[TRIM] = [row(i, 400_000) for i in range(1, 12)]
         FakeScraper.pages[self.URL] = [listing(1, 350_000)]   # %12,5 ama 50 bin TL: ne %15 ne TL yolu
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
+        self.assertEqual(self.sent, [])
+
+
+class SameTrimOnlyTests(PipelineBase):
+    CFG = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, release_minutes=0)
+
+    async def test_other_trims_do_not_inflate_the_median(self):
+        # motor sayfasında 10 ilan var ama hepsi üst donanım (pahalı): aynı donanım yok -> karşılaştırma yok
+        pricey = dict(row(1, 1_400_000), name="Renault Megane 1.5 dCi Icon")
+        FakeScraper.lists[ENGINE] = [dict(pricey, id=f"r{i}") for i in range(1, 11)]
+        FakeScraper.pages[self.URL] = [listing(1, 1_150_000)]          # üst donanımlara göre %18 ucuz görünürdü
         async with self.Session() as s:
             await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig())
         self.assertEqual(self.sent, [])
