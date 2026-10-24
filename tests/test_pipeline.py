@@ -30,6 +30,7 @@ class FakeScraper:
     pages: dict[str, list[dict]] = {}
     lists: dict[str, list[dict]] = {}   # karşılaştırma sayfaları: url -> satırlar
     list_fetches: list[str] = []
+    category_fetches: list[str] = []
     blocked = False
 
     def __init__(self, proxy_manager):
@@ -42,6 +43,7 @@ class FakeScraper:
         return False
 
     async def fetch_category_links(self, url):
+        FakeScraper.category_fetches.append(url)
         if FakeScraper.blocked:
             self.last_blocked = True
             return []
@@ -81,6 +83,7 @@ class PipelineBase(unittest.IsolatedAsyncioTestCase):
         FakeScraper.pages = {}
         FakeScraper.lists = {}
         FakeScraper.list_fetches = []
+        FakeScraper.category_fetches = []
         FakeScraper.blocked = False
         # testler günün saatinden bağımsız çalışsın: galerici gönderim saati her zaman açık
         self._dealer_hours = (settings.DEALER_ACTIVE_START, settings.DEALER_ACTIVE_END)

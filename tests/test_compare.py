@@ -327,6 +327,15 @@ class SameTrimOnlyTests(PipelineBase):
         self.assertEqual(self.sent, [])
 
 
+class EmptyPageTests(PipelineBase):
+    async def test_empty_later_page_is_not_requested_again(self):
+        self.URL = "https://www.arabam.com/ikinci-el/otomobil/x?sort=DateDesc&page=9"
+        async with self.Session() as s:
+            await self.cycle(s)
+            await self.cycle(s)
+        self.assertEqual(len(FakeScraper.category_fetches), 1)
+
+
 class StrictQualityTests(PipelineBase):
     CFG = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, release_minutes=0)
 

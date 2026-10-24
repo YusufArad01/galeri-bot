@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 from datetime import datetime
 from typing import Callable
 
@@ -25,6 +26,9 @@ _FATAL_PRICE_KINDS = {"no_key", "auth", "quota", "breaker"}
 # Açılamayan ilan (kaldırılmış/satılmış) her turda yeniden denenip hata yazmasın: 3 başarısızlıktan sonra atlanır.
 # shortcut: yalnız bellekte, yeniden başlatmada sıfırlanır (3 deneme daha yapılır); kalıcı olması gerekirse DB'ye taşı.
 _SCRAPE_FAILS: dict[str, int] = {}
+# Boş çıkan 2. ve sonraki sayfa (ilan sayısı o kadar sayfaya yetmiyor) 30 dk boyunca yeniden istenmez: boşuna istek/yeniden deneme olmasın.
+_EMPTY_PAGES: dict[str, float] = {}
+_EMPTY_PAGE_TTL = 1800
 _MAX_SCRAPE_FAILS = 3
 
 
@@ -161,8 +165,12 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
         async with engine_factory(kind, proxy_manager) as scraper:
             links: list[str] = []
             for url in urls:
+                if "&page=" in url and _EMPTY_PAGES.get(url, 0) > time.monotonic():
+                    continue
                 logger.info(f"Fetching category links from: {url}")
                 got = await scraper.fetch_category_links(url)
+                if not got and "&page=" in url and not getattr(scraper, "last_blocked", False):
+                    _EMPTY_PAGES[url] = time.monotonic() + _EMPTY_PAGE_TTL
                 logger.info(f"Found {len(got)} listings on {url}")
                 stats.links_found += len(got)
                 stats.blocked = stats.blocked or getattr(scraper, "last_blocked", False)
