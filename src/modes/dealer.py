@@ -43,6 +43,7 @@ class Rule:
     allowed_paint_parts: tuple[str, ...] = ()   # boya yalnız bu sözcükleri içeren parçalarda olabilir (örn. "camurluk")
     max_tramer_tl: int | None = None
     baseline: float | None = None    # galericinin piyasa ortalaması (yalnız mesajda kıyas için)
+    market_min_profit_tl: int | None = None  # emsal kıyasında bu kurala özel TL tabanı (yoksa galerici düzeyindeki değer)
 
     def label(self) -> str:
         return f"{self.brand} {self.model}".strip()
@@ -194,6 +195,7 @@ def parse_dealers(raw: dict | list) -> list[Dealer]:
                 km_per_year_max=int(r["km_per_year_max"]) if r.get("km_per_year_max") else None,
                 max_tramer_tl=int(r["max_tramer_tl"]) if r.get("max_tramer_tl") is not None else None,
                 baseline=baseline,
+                market_min_profit_tl=int(r["market_min_profit_tl"]) if r.get("market_min_profit_tl") else None,
             ))
         if not rules:
             raise DealerConfigError(f"{ctx}: en az bir kural gerekli")
@@ -283,7 +285,9 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
                     continue
                 market_err = exc
             if est and est.average > 0:
-                market_hit = discount_pct(price, est.average) >= dealer.market_discount_pct and                     est.average - price >= dealer.market_min_profit_tl
+                floors = [r.market_min_profit_tl for r in matched if r.market_min_profit_tl is not None]
+                floor = min(floors) if floors else dealer.market_min_profit_tl
+                market_hit = discount_pct(price, est.average) >= dealer.market_discount_pct and                     est.average - price >= floor
 
         if not target_hits and not market_hit:
             continue

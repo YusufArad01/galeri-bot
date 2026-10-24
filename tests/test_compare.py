@@ -295,6 +295,14 @@ class DealerMarketProfitTests(PipelineBase):
         self.assertIn("880.000 TL", self.sent[0]["text"])
         self.assertIn("120.000 TL altında", self.sent[0]["text"])
 
+    async def test_rule_level_floor_overrides_dealer_floor(self):
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 12)]
+        FakeScraper.pages[self.URL] = [listing(1, 920_000)]    # %8 ve 80 bin TL: dealer tabanı 100 bin geçmez, kural tabanı 60 bin geçer
+        raw = {"dealers": [dict(self.DEALER["dealers"][0], rules=[{"brand": "Renault", "model": "Megane", "market_min_profit_tl": 60_000}])]}
+        async with self.Session() as s:
+            await self.cycle(s, modes=("dealer",), dealers=parse_dealers(raw), bench_cfg=BenchConfig(min_comparables=10))
+        self.assertEqual(len(self.sent), 1)
+
     async def test_no_comparable_peers_means_no_message(self):
         FakeScraper.pages[self.URL] = [listing(1, 500_000)]    # emsal yok, Perplexity kapalı: mesaj yok, hata da yok
         async with self.Session() as s:
