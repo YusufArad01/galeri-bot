@@ -1,5 +1,9 @@
 import unittest
 
+from src.config import settings
+from src.notifications import flush_alerts
+from tests.test_pipeline import FakeScraper, PipelineBase, car as pipeline_car
+
 from src.modes.dealer import blacklisted, parse_dealers
 from src.parsing import parse_expertise, tramer_from_text
 
@@ -88,6 +92,31 @@ class TramerTextTests(unittest.TestCase):
         self.assertEqual(tramer_from_text("hatasız boyasız tramersiz"), 0)
         self.assertEqual(tramer_from_text("tramer 8.500 tl"), 8500)
         self.assertIsNone(tramer_from_text("temiz araç, tramer sorulur"))
+
+
+class DealerHoldTests(PipelineBase):
+    async def test_night_dealer_alert_waits_and_goes_when_hours_open(self):
+        FakeScraper.pages[self.URL] = [pipeline_car(1, 700_000)]
+        dealers = parse_dealers({"dealers": [{"id": "d", "chat_id": "42", "rules": [
+            {"brand": "Renault", "model": "Megane", "max_price": 800_000}]}]})
+        settings.DEALER_ACTIVE_START, settings.DEALER_ACTIVE_END = 0, 0     # kapalı
+        async with self.Session() as s:
+            st = await self.cycle(s, modes=("dealer",), dealers=dealers)
+            self.assertEqual((st.alerts_queued, st.alerts_sent, len(self.sent)), (1, 0, 0))   # kuyrukta bekler
+            settings.DEALER_ACTIVE_START, settings.DEALER_ACTIVE_END = 0, 24                   # açıldı
+            sent, _ = await flush_alerts(s, self.telegram)
+            self.assertEqual((sent, len(self.sent)), (1, 1))
+            self.assertEqual(self.sent[0]["chat_id"], "42")
+
+
+class DealerHoursTests(unittest.TestCase):
+    def test_hours_are_turkey_time(self):
+        from datetime import datetime
+        from src.notifications import dealer_hours_open
+        self.assertFalse(dealer_hours_open(datetime(2026, 10, 24, 1, 51)))    # 04:51 TR
+        self.assertTrue(dealer_hours_open(datetime(2026, 10, 24, 5, 0)))      # 08:00 TR
+        self.assertTrue(dealer_hours_open(datetime(2026, 10, 24, 19, 59)))    # 22:59 TR
+        self.assertFalse(dealer_hours_open(datetime(2026, 10, 24, 20, 0)))    # 23:00 TR
 
 
 class BlacklistTests(unittest.TestCase):

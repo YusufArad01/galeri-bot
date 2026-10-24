@@ -76,6 +76,8 @@ class Settings(BaseSettings):
 
     # --- Galerici profilleri ------------------------------------------------
     DEALERS_JSON: str = ""
+    DEALER_ACTIVE_START: int = 8     # galerici mesajları Türkiye saatiyle bu saatler arasında gider [başlangıç, bitiş)
+    DEALER_ACTIVE_END: int = 23
     DEALERS_FILE: str = "dealers.json"
 
     DB_PATH: str = "arbitrage_db.sqlite"

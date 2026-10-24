@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.models.domain import Alert
 
 MAX_LEN = 4096
@@ -84,9 +85,18 @@ async def enqueue_alert(session: AsyncSession, *, source_listing_id: str, mode: 
     return alert
 
 
-async def flush_alerts(session: AsyncSession, telegram: Telegram) -> tuple[int, int]:
-    """PENDING bildirimleri gönderir. (gönderilen, hâlâ bekleyen) döner."""
-    cutoff = datetime.utcnow() - PENDING_MAX_AGE
+def dealer_hours_open(now_utc: datetime) -> bool:
+    """Galerici mesajları yalnız Türkiye saatiyle [DEALER_ACTIVE_START, DEALER_ACTIVE_END) arasında gider."""
+    hour = (now_utc + timedelta(hours=3)).hour
+    return settings.DEALER_ACTIVE_START <= hour < settings.DEALER_ACTIVE_END
+
+
+async def flush_alerts(session: AsyncSession, telegram: Telegram, now: datetime | None = None) -> tuple[int, int]:
+    """PENDING bildirimleri gönderir. (gönderilen, hâlâ bekleyen) döner.
+    Saat dışında düşen galerici bildirimleri kuyrukta bekler, açılış saatinde gider (kaybolmaz)."""
+    now = now or datetime.utcnow()
+    dealer_open = dealer_hours_open(now)
+    cutoff = now - PENDING_MAX_AGE
     rows = (await session.execute(
         select(Alert).where(Alert.status == "PENDING").order_by(Alert.id)
     )).scalars().all()
@@ -94,6 +104,9 @@ async def flush_alerts(session: AsyncSession, telegram: Telegram) -> tuple[int, 
     for alert in rows:
         if alert.created_at and alert.created_at < cutoff or alert.attempts >= MAX_ATTEMPTS:
             alert.status = "FAILED"
+            continue
+        if alert.mode == "dealer" and not dealer_open:
+            still += 1
             continue
         alert.attempts += 1
         if await telegram.send(alert.chat_id, alert.text):

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from src.health import CycleStats, Health
 from src.models.domain import Alert, Base, BotState, Listing
+from src.config import settings
 from src.modes.dealer import parse_dealers
 from src.notifications import Telegram
 from src.pipeline import run_cycle
@@ -81,6 +82,9 @@ class PipelineBase(unittest.IsolatedAsyncioTestCase):
         FakeScraper.lists = {}
         FakeScraper.list_fetches = []
         FakeScraper.blocked = False
+        # testler günün saatinden bağımsız çalışsın: galerici gönderim saati her zaman açık
+        self._dealer_hours = (settings.DEALER_ACTIVE_START, settings.DEALER_ACTIVE_END)
+        settings.DEALER_ACTIVE_START, settings.DEALER_ACTIVE_END = 0, 24
 
         def handler(request: httpx.Request) -> httpx.Response:
             if "telegram.org" in request.url.host:
@@ -98,6 +102,7 @@ class PipelineBase(unittest.IsolatedAsyncioTestCase):
         self.telegram = Telegram("TOKEN", client=self.client)
 
     async def asyncTearDown(self):
+        settings.DEALER_ACTIVE_START, settings.DEALER_ACTIVE_END = self._dealer_hours
         await self.client.aclose()
         await self.engine.dispose()
         try:
