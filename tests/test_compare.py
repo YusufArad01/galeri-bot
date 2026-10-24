@@ -363,9 +363,10 @@ class DeepPageTests(PipelineBase):
         self.URL = "https://www.arabam.com/ikinci-el/otomobil/x?sort=DateDesc&page=3"
         FakeScraper.pages[self.URL] = [listing(1, 900_000)]
         async with self.Session() as s:
+            await self.cycle(s)      # ilan işlenmemiş: sayfa atlanmaz
+            await self.cycle(s)      # artık hepsi bilinen: atlama başlar
             await self.cycle(s)
-            await self.cycle(s)
-        self.assertEqual(len(FakeScraper.category_fetches), 1)
+        self.assertEqual(len(FakeScraper.category_fetches), 2)
 
 
 class StrictQualityTests(PipelineBase):

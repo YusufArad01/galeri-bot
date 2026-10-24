@@ -193,7 +193,9 @@ async def run_cycle(*, session: AsyncSession, engine_factory: Callable[[str, Pro
                     page_no = int(url.rsplit("&page=", 1)[1].split("&")[0] or 1)
                     if not got:
                         _EMPTY_PAGES[url] = time.monotonic() + _EMPTY_PAGE_TTL
-                    elif page_no >= 3:
+                    elif page_no >= 3 and len(await known_ids(session, [scraper.source_id(g) for g in got])) == len(got):
+                        # derin sayfa ancak içindeki TÜM ilanlar işlendiyse (bilinen) atlanır; işlenmemiş ilan kaldıysa
+                        # her turda yeniden istenir (tur başına ilan hakkı yetmeyince geri kalanlar kaybolmasın)
                         _EMPTY_PAGES[url] = time.monotonic() + _DEEP_PAGE_TTL
                 logger.info(f"Found {len(got)} listings on {url}")
                 stats.links_found += len(got)
