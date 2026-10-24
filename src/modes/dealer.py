@@ -114,6 +114,8 @@ class Dealer:
     rules: tuple[Rule, ...]
     market_check: bool = False
     market_discount_pct: float = 15.0
+    market_min_profit_tl: int = 0        # >0: emsal ortancasından en az bu kadar TL ucuz olmalı (yüzde alt sınır yine geçerli)
+    perplexity_fallback: bool = True     # False: aynı donanımda yeterli emsal yoksa piyasa kontrolü atlanır (Perplexity tahmini kullanılmaz)
     allow_damaged: bool = False
     active: bool = True
     blacklist: tuple[str, ...] = ()   # ilan başlığı/açıklamasında geçerse elenir ("yok" ile olumsuzlananlar sayılmaz)
@@ -202,6 +204,8 @@ def parse_dealers(raw: dict | list) -> list[Dealer]:
             rules=tuple(rules),
             market_check=market_check,
             market_discount_pct=float(d.get("market_discount_pct", 15.0)),
+            market_min_profit_tl=int(d.get("market_min_profit_tl", 0) or 0),
+            perplexity_fallback=bool(d.get("perplexity_fallback", True)),
             allow_damaged=bool(d.get("allow_damaged", False)),
             active=bool(d.get("active", True)),
             blacklist=tuple(str(x) for x in (d.get("blacklist") or [])),
@@ -269,7 +273,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
                 if res is not None:
                     est = PriceEstimate(res.median, None, None, "benchmark")
                     source = f"{res.level} {res.comparables} güncel ilanın ortası"
-                else:
+                elif dealer.perplexity_fallback:
                     est = await prices.estimate(data["brand"], data["model"], data.get("trim", ""),
                                                 data["year"], data.get("km") or 0)
                     source = "Piyasa ort. (tahmin)"
@@ -279,7 +283,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
                     continue
                 market_err = exc
             if est and est.average > 0:
-                market_hit = discount_pct(price, est.average) >= dealer.market_discount_pct
+                market_hit = discount_pct(price, est.average) >= dealer.market_discount_pct and                     est.average - price >= dealer.market_min_profit_tl
 
         if not target_hits and not market_hit:
             continue
@@ -294,7 +298,7 @@ async def evaluate(data: dict, dealers: list[Dealer], prices: PriceService,
         if est and est.average > 0:
             pct = discount_pct(price, est.average)
             tag = "✅" if market_hit else "ℹ️"
-            lines.append(f"📊 {tag} {source}: {fmt_tl(est.average)} TL (ilan %{fmt_pct(pct)} {'altında' if pct >= 0 else 'üstünde'})")
+            lines.append(f"📊 {tag} {source}: {fmt_tl(est.average)} TL (ilan %{fmt_pct(pct)} / {fmt_tl(abs(est.average - price))} TL {'altında' if pct >= 0 else 'üstünde'})")
             if market_hit:
                 reasons.append(f"piyasa -%{fmt_pct(pct)}")
         elif market_err is not None:

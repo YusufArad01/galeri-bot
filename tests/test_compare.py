@@ -280,6 +280,28 @@ class DealerBenchTests(PipelineBase):
         self.assertIn("Aynı donanımdaki 6 güncel ilanın ortası", self.sent[0]["text"])
 
 
+class DealerMarketProfitTests(PipelineBase):
+    DEALER = {"dealers": [{"id": "d", "chat_id": "42", "market_check": True, "market_discount_pct": 5,
+                           "market_min_profit_tl": 100_000, "perplexity_fallback": False,
+                           "rules": [{"brand": "Renault", "model": "Megane"}]}]}
+
+    async def test_needs_100k_tl_below_live_peers_and_no_perplexity(self):
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 12)]
+        FakeScraper.pages[self.URL] = [listing(1, 880_000),    # %12 ve 120 bin TL: geçer
+                                       listing(2, 920_000)]    # %8 ama 80 bin TL: geçmez
+        async with self.Session() as s:
+            await self.cycle(s, modes=("dealer",), dealers=parse_dealers(self.DEALER), bench_cfg=BenchConfig(min_comparables=10))
+        self.assertEqual((len(self.sent), self.pplx_calls), (1, 0))
+        self.assertIn("880.000 TL", self.sent[0]["text"])
+        self.assertIn("120.000 TL altında", self.sent[0]["text"])
+
+    async def test_no_comparable_peers_means_no_message(self):
+        FakeScraper.pages[self.URL] = [listing(1, 500_000)]    # emsal yok, Perplexity kapalı: mesaj yok, hata da yok
+        async with self.Session() as s:
+            st = await self.cycle(s, modes=("dealer",), dealers=parse_dealers(self.DEALER), bench_cfg=BenchConfig(min_comparables=10))
+        self.assertEqual((len(self.sent), st.deferred, self.pplx_calls), (0, 0, 0))
+
+
 class FilteredUrlTests(PipelineBase):
     def test_year_and_km_filter_added(self):
         from src.benchmark import filtered_url
