@@ -33,6 +33,14 @@ Son güncelleme: 2026-10-25 11:20 (TR)
 - **Son canlı mesajın (Passat 1.6 TDI Elegance 2019, 195 bin km, 1.595.000 TL) kıyası yeniden üretildi:** aynı donanım 18 emsal, düzeltilmiş ortanca 2.082.632 TL, ilan hepsinin en ucuzu; ama ilan 2 değişen (motor kaputu, sol ön çamurluk) + 1 boyalı, emsaller çoğunlukla temiz. Bot hasar için yalnız 9,5 puan düşüyor (4/değişen, 1,5/boyalı — TAHMİN, ölçülmedi). Kullanıcı piyasada ~1,7 milyon gördü → büyük ihtimalle düşük donanım ya da hasarlı. **Açık: hasar payı gerçek veriyle ölçülüp düzeltilmeli** (öneri: ~100 ilan detayı yerelde, ev IP'sinden yavaş, canlı proxy'ye dokunma). Mesajdaki sayılar da karışık: başlık %13,9 (hasar düşülmüş), "Fark" satırı %23,4 (ham).
 - **Perplexity hasarı fiyata yansıtmıyor (6 araç, 4 senaryo, ~40 sorgu):** cevap oranı hasarsızda 8/12, 2 değişende 5/12, ağır hasarda 2/6; tepki tutarsız (Astra'da 1 boyalı +%21, Leon'da 2 değişen %0, Megane 2 değişen −%19, ağır hasar −%28…−%41). Asıl Passat için 2 denemeden biri "yok", diğeri 1.900.000. Karar (kullanıcının kuralıyla): Perplexity YEDEK kalır, çift katman doğrulayıcı olmaz. İsteğe bağlı: bilgi amaçlı "ikinci görüş" satırı.
 
+## Hasar payı ölçümü (25.10 öğleden sonra, ev IP'sinden, 139 ilan, 10 aynı-donanım grubu)
+Grup sabit etkili log-fiyat regresyonu (araç ilan fiyatı ~ yıl + km + değişen sayısı + boyalı sayısı). Ham veri: scratchpad `damage/data.jsonl`, betikler `damage_study.py` / `damage_analyze.py`.
+- her değişen parça **−%6,2** (%95: −7,7…−4,7) — bot 4 puan düşüyor (az); her boyalı parça **−%1,4** (−2,0…−0,8) — bot 1,5 (doğru); +1 yıl **+%5,2** (bot 3,5; 23.10 ölçümü 3,6 — çelişik); +10 bin km **−%1,9** (bot 1,5; 23.10 ölçümü 1,5).
+- Kalıntı sapma ≈ %7: tek bir ilanın adil fiyatı ±%7 oynar → ≥%8 yolu gürültü düzeyinde.
+- İlanların %71'inde boya/değişen var (ortalama 0,46 değişen, 2,14 boyalı); yani emsal ortancası "temiz araç" değil. Passat Elegance emsalleri bu grupta temizdi (14 ilanın 2'sinde değişen).
+- Son canlı mesaj (Passat Elegance 2019, 195 bin km, 2 değişen+1 boyalı, 1.595.000): regresyonla adil fiyat ≈ 1.838.000 → ilan ≈ %13 altında; en yakın hasarlı emsal (230 bin km, 2/1, 1.635.000) km düzeltmesiyle ≈ 1.74 milyon → ≈ %8 altında. Bot net %13,9 demişti: makul ama "Fark %23,4 / 487 bin TL" satırı abartılı. 
+- Öneri (henüz uygulanmadı): `PENALTY_PER_DEGISEN` 4 → 6; mesajda tek tutarlı sayı (hasar payı düşülmüş referans ve fark); yıl/km katsayısına şimdilik dokunma.
+
 ## Sıradaki işler
 - ~~B1 engel kontrolü~~ ve ~~B2 push~~: YAPILDI 25.10 11:08 (yeni proxy + 4 commit canlıda).
 - **B2b** Canlıda doğrula: 👍/👎, `/start`, tahmin mesajı, 22:00 özeti; sonra `railway_degisken_temizle.py` (dry-run → `--sil`).
