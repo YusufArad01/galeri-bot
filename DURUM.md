@@ -29,6 +29,10 @@ Son güncelleme: 2026-10-25 11:20 (TR)
 - Ölçüm (25.10): 13 yaygın araçta cevap verince arabam ortancasına yakın (tipik hata %5–8, hiçbiri %17+ yüksek değil) ama sorguların ~%25–55'ine cevap veriyor; nadir araçlarda 14/23 cevap, yuvarlak sayılar (tahmin gibi), doğruluğu ölçülemedi. İlan satırı vermiyor (liste isteyince boş döner). Canlı API'de üretim istemiyle 4 denemede 1 cevap geldi.
 - Maliyet: ~0,4 sent/sorgu (sonar-pro + yüksek bağlam). Test için ~0,5 USD harcandı.
 
+## Ölçümler 25.10 (öğleden sonra)
+- **Son canlı mesajın (Passat 1.6 TDI Elegance 2019, 195 bin km, 1.595.000 TL) kıyası yeniden üretildi:** aynı donanım 18 emsal, düzeltilmiş ortanca 2.082.632 TL, ilan hepsinin en ucuzu; ama ilan 2 değişen (motor kaputu, sol ön çamurluk) + 1 boyalı, emsaller çoğunlukla temiz. Bot hasar için yalnız 9,5 puan düşüyor (4/değişen, 1,5/boyalı — TAHMİN, ölçülmedi). Kullanıcı piyasada ~1,7 milyon gördü → büyük ihtimalle düşük donanım ya da hasarlı. **Açık: hasar payı gerçek veriyle ölçülüp düzeltilmeli** (öneri: ~100 ilan detayı yerelde, ev IP'sinden yavaş, canlı proxy'ye dokunma). Mesajdaki sayılar da karışık: başlık %13,9 (hasar düşülmüş), "Fark" satırı %23,4 (ham).
+- **Perplexity hasarı fiyata yansıtmıyor (6 araç, 4 senaryo, ~40 sorgu):** cevap oranı hasarsızda 8/12, 2 değişende 5/12, ağır hasarda 2/6; tepki tutarsız (Astra'da 1 boyalı +%21, Leon'da 2 değişen %0, Megane 2 değişen −%19, ağır hasar −%28…−%41). Asıl Passat için 2 denemeden biri "yok", diğeri 1.900.000. Karar (kullanıcının kuralıyla): Perplexity YEDEK kalır, çift katman doğrulayıcı olmaz. İsteğe bağlı: bilgi amaçlı "ikinci görüş" satırı.
+
 ## Sıradaki işler
 - ~~B1 engel kontrolü~~ ve ~~B2 push~~: YAPILDI 25.10 11:08 (yeni proxy + 4 commit canlıda).
 - **B2b** Canlıda doğrula: 👍/👎, `/start`, tahmin mesajı, 22:00 özeti; sonra `railway_degisken_temizle.py` (dry-run → `--sil`).
