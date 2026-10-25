@@ -11,11 +11,19 @@ class ProxyManager:
         self.session = session
 
     async def seed(self, urls: list[str]) -> None:
-        """PROXY_URL ortam değişkenindeki proxy'leri tabloya ekler (varsa dokunmaz)."""
-        for url in urls:
-            exists = (await self.session.execute(select(Proxy).where(Proxy.url == url))).scalars().first()
-            if not exists:
-                self.session.add(Proxy(url=url))
+        """Tabloyu PROXY_URL'e eşitler: listedekiler eklenir/açılır, listede olmayanlar KAPATILIR. Proxy değiştirilince
+        eski (engelli) IP diskteki veritabanında kalıp rastgele seçilmesin."""
+        wanted = set(urls)
+        known = set()
+        for proxy in (await self.session.execute(select(Proxy))).scalars().all():
+            known.add(proxy.url)
+            if proxy.url in wanted and not proxy.is_active:
+                proxy.is_active, proxy.failure_count = True, 0
+            elif proxy.url not in wanted and proxy.is_active:
+                proxy.is_active = False
+                logger.info("PROXY_URL'de olmayan proxy kapatıldı.")
+        for url in wanted - known:
+            self.session.add(Proxy(url=url))
         await self.session.commit()
 
     async def has_active(self) -> bool:
