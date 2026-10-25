@@ -1,9 +1,11 @@
 # DURUM — arbitrage_engine
 
-Son güncelleme: 2026-10-25 00:50 (TR)
+Son güncelleme: 2026-10-25 11:20 (TR)
 
 ## Canlıdaki durum
-- Railway (`truthful-trust` / `galeri-bot`): canlı sürüm `7c2f278`. **Yerelde commit'li ama GÖNDERİLMEMİŞ: `b0c57ef` + `8446625` + Perplexity yedeği commit'i** (temizlik + yeni özellikler + tahmin yedeği, aşağıda). Railway'de `PERPLEXITY_API_KEY` duruyor (temizlik betiği artık silmez).
+- **25.10 11:08 (TR): Railway canlı sürüm `9ea3214` (temizlik + düğmeler + Perplexity yedeği + proxy eşitleme), YENİ proxy `131.222.224.26:10225` (çıkış IP 153.56.216.133).** Engel çözüldü: ilk tur temiz (270 bağlantı, 20 ilan incelendi, 0 hata, 1 mesaj gitti, Perplexity canlıda sorgu attı). Eski proxy (10171) bırakıldı; `Proxy` tablosundaki eski kayıt `seed` ile kapanıyor. Bu satırın altındaki "ENGEL" ve "Karar" maddeleri TARİHÎ.
+- Doğrulanmamış (canlıda henüz görülmedi): mesajdaki 👍/👎 görünümü ve oy kaydı, `/start`, telefon satırı (galerici mesajı), 22:00 galerici özeti, tahminli mesajın (🔮) gerçek Telegram görünümü. Railway'de fazla değişkenler hâlâ duruyor: `railway_degisken_temizle.py` (önce çıktıyı kontrol et, sonra `--sil`; `PERPLEXITY_API_KEY` kalanlar listesinde).
+- Bilinen açıklar (24-25.10 taraması): (1) engelliyken galerici 22:00 özeti "yeni ilan çıkmadı" diyor (yanlış güvence), (2) galerici başına günlük mesaj üst sınırı yok, (3) tur 20 dk → gecikme, (4) fiyat bandı yalnız VW 5 model, (5) isabet oranı ölçülmedi, (6) disk yedeği yok.
 - `BOT_MODE=compare,dealer`. Tek ProxyTurk proxy (IP 153.56.219.29, canlı).
 - **ENGEL:** 24.10 14:46'dan beri Railway→arabam Cloudflare 403 (IP işaretlendi; sebep: benim artırdığım istek yükü ~250/saat + sık yeniden başlatma). Canlıda: engelde sayfa isteme + 15/30/60/120 dk geri çekilme. Her deploy sayacı sıfırlar.
 - **Karar (kullanıcı): 25.10 öğlen 12:00'ye kadar bekle.** Kalkmadıysa ProxyTurk'ten yeni IP; yedek proxy kodu `proxy-rotasyonu` dalında (birleşmemiş, güncel koda uyarlanmalı).
@@ -28,8 +30,9 @@ Son güncelleme: 2026-10-25 00:50 (TR)
 - Maliyet: ~0,4 sent/sorgu (sonar-pro + yüksek bağlam). Test için ~0,5 USD harcandı.
 
 ## Sıradaki işler
-- **B1** 25.10 12:00: engel kalktı mı bak (Railway log). Kalkmadıysa yeni IP/yedek proxy.
-- **B2** Engel kalkınca: `git push` (3 commit) → dağıtımı izle → düğme/`/start`/telefon/tahmin mesajı canlı doğrula → `railway_degisken_temizle.py --sil` (önce çıktıyı kontrol et; `PERPLEXITY_API_KEY` kalan listesinde).
+- ~~B1 engel kontrolü~~ ve ~~B2 push~~: YAPILDI 25.10 11:08 (yeni proxy + 4 commit canlıda).
+- **B2b** Canlıda doğrula: 👍/👎, `/start`, tahmin mesajı, 22:00 özeti; sonra `railway_degisken_temizle.py` (dry-run → `--sil`).
+- **B2c** İstenirse: bilinen iki açığı kapat (engelde galerici özeti, günlük galerici sınırı).
 - **B3** Pazartesi/salı Adana Oto Galericiler Odası Başkanı sunumu: tek dosyalık koyu temalı HTML (`impeccable` skill + hafızadaki sunum stili), gerçek mesaj örnekleri, fiyat önerisi, 2 hafta ücretsiz pilot.
 - **B4** Gelen mesajlar 👍/👎 ile birikince kural/eşik ayarı (otomatik eğitim YOK; ölçüm var, ayarı elle yaparız).
 - Ertelenen/gereksiz (kullanıcı kararı): fiyat düşüşü takibi, "satışta mı" kontrolü, tekrar ilan eşleştirme, tramer yoksa yapılacak bir şey yok, arabam şartları riski kabul edildi.
