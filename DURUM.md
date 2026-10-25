@@ -39,7 +39,7 @@ Grup sabit etkili log-fiyat regresyonu (araç ilan fiyatı ~ yıl + km + değiş
 - Kalıntı sapma ≈ %7: tek bir ilanın adil fiyatı ±%7 oynar → ≥%8 yolu gürültü düzeyinde.
 - İlanların %71'inde boya/değişen var (ortalama 0,46 değişen, 2,14 boyalı); yani emsal ortancası "temiz araç" değil. Passat Elegance emsalleri bu grupta temizdi (14 ilanın 2'sinde değişen).
 - Son canlı mesaj (Passat Elegance 2019, 195 bin km, 2 değişen+1 boyalı, 1.595.000): regresyonla adil fiyat ≈ 1.838.000 → ilan ≈ %13 altında; en yakın hasarlı emsal (230 bin km, 2/1, 1.635.000) km düzeltmesiyle ≈ 1.74 milyon → ≈ %8 altında. Bot net %13,9 demişti: makul ama "Fark %23,4 / 487 bin TL" satırı abartılı. 
-- Öneri (henüz uygulanmadı): `PENALTY_PER_DEGISEN` 4 → 6; mesajda tek tutarlı sayı (hasar payı düşülmüş referans ve fark); yıl/km katsayısına şimdilik dokunma.
+- **Uygulandı (kullanıcı onayıyla, 25.10):** `PENALTY_PER_DEGISEN` 4 → 6 (boyalı 1,5 kaldı); genel mod mesajı artık tek tutarlı sayı gösterir: ortanca → "Boya/değişen … (hasar payı %X referanstan düşüldü)" → "Referans: R TL → ilan G TL (%Z) altında"; başlıktaki % de Z. Eşik/sıralama hâlâ ortancaya göre net farkla (`discount_pct`). Yıl/km katsayılarına dokunulmadı (ölçümler çelişik: yıl 3,5 vs 5,2; km 1,5 vs 1,9). Galerici mesajları bu hasar cezasını kullanmaz (kural bazlı).
 
 ## Sıradaki işler
 - ~~B1 engel kontrolü~~ ve ~~B2 push~~: YAPILDI 25.10 11:08 (yeni proxy + 4 commit canlıda).

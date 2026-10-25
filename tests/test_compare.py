@@ -116,6 +116,39 @@ class CompareModeTests(PipelineBase):
         self.assertEqual((self.sent, st.bench_empty), ([], 2))
 
 
+class DamageMessageTests(PipelineBase):
+    """Hasar payı ölçüme göre (değişen 6, boyalı 1,5 puan) ve mesajdaki sayılar birbiriyle tutarlı."""
+    CFG = CompareConfig(active_start=0, active_end=24, min_discount_pct=10.0, max_items=1, release_minutes=0)
+
+    async def send_one(self, price, **kw):
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 11)]
+        FakeScraper.pages[self.URL] = [listing(1, price, **kw)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig(min_comparables=10))
+        self.assertEqual(len(self.sent), 1)
+        return self.sent[0]["text"]
+
+    async def test_damaged_car_shows_adjusted_reference_and_consistent_gap(self):
+        text = await self.send_one(700_000, degisen=2, boyali=1)       # ham fark %30, hasar payı 2x6+1,5 = 13,5 puan
+        for needle in ("benzerlerinden %19,1 ucuz", "2 değişen, 1 boyalı (hasar payı %13,5 referanstan düşüldü)",
+                       "Referans: 865.000 TL → ilan 165.000 TL (%19,1) altında", "ortası: 1.000.000 TL"):
+            self.assertIn(needle, text)
+        self.assertNotIn("Fark:", text)
+
+    async def test_clean_car_reference_equals_median(self):
+        text = await self.send_one(800_000)
+        self.assertIn("Boya/değişen: yok", text)
+        self.assertIn("Referans: 1.000.000 TL → ilan 200.000 TL (%20,0) altında", text)
+
+    async def test_heavier_damage_needs_a_cheaper_price(self):
+        # 3 değişen = 18 puan: ham %25 fark net %7'ye düşer, %10 eşiğini geçemez; eski ceza (4/değişen) %13 bırakır ve geçerdi
+        FakeScraper.lists[TRIM] = [row(i, 1_000_000) for i in range(1, 11)]
+        FakeScraper.pages[self.URL] = [listing(1, 750_000, degisen=3)]
+        async with self.Session() as s:
+            await self.cycle(s, modes=("compare",), compare=self.CFG, bench_cfg=BenchConfig(min_comparables=10))
+        self.assertEqual(self.sent, [])
+
+
 class BlockNoteTests(PipelineBase):
     async def test_block_alert_contains_page_hint(self):
         async with self.Session() as s:

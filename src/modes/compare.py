@@ -20,9 +20,10 @@ from src.models.domain import BotState, CompareCandidate
 from src.messages import MIN_VALID_PRICE, discount_pct, fmt_pct, fmt_tl, listing_block
 from src.notifications import enqueue_alert
 
-# Boya/değişen payı: benzer ilanlar çoğunlukla temiz, hasarlı ilan doğal olarak ucuz. Veriyle ölçülmedi, tahmini
-# değerler (puan): bir değişen parça ~4, bir boyalı/lokal boyalı parça ~1,5 puan fark yaratır.
-PENALTY_PER_DEGISEN = 4.0
+# Boya/değişen payı (puan): hasarlı ilan doğal olarak ucuzdur. 25.10.2026'da 139 ilanla ölçüldü (aynı donanım içinde,
+# yıl ve km sabit): her değişen parça -%6,2 (%95 aralık 4,7-7,7), her boyalı/lokal boyalı parça -%1,4 (0,8-2,0).
+# Ceza hasarsızdan başlar (emsallerin %71'inde de boya/değişen var, yani biraz temkinli).
+PENALTY_PER_DEGISEN = 6.0
 PENALTY_PER_BOYALI = 1.5
 SUSPICIOUS_PCT = 35.0   # bundan büyük fark çoğunlukla hata/dolandırıcılık/gizli hasar: puan düşer
 TR_OFFSET = timedelta(hours=3)  # gün sınırı Türkiye saatine göre
@@ -89,25 +90,37 @@ def score(e: Entry) -> float:
     return base * 0.75 if e.estimated else base
 
 
-def damage_line(d: dict) -> str:
+def damage_line(d: dict, penalty_pts: float = 0.0) -> str:
     parts = []
     if d.get("degisen"):
         parts.append(f"{d['degisen']} değişen")
     if d.get("boyali"):
         parts.append(f"{d['boyali']} boyalı")
-    return f"\n🔧 Boya/değişen: {', '.join(parts)} (farktan düşüldü)" if parts else "\n🔧 Boya/değişen: yok"
+    if not parts:
+        return "\n🔧 Boya/değişen: yok"
+    return f"\n🔧 Boya/değişen: {', '.join(parts)} (hasar payı %{fmt_pct(penalty_pts)} referanstan düşüldü)"
+
+
+def reference_view(e: Entry) -> tuple[float, float, float, float]:
+    """(hasar payı düşülmüş referans, fark TL, farkın referansa oranı %, hasar payı puanı). Mesajdaki bütün sayılar
+    buradan çıkar ki birbiriyle tutarlı olsun (eşik/sıralama ise ortancaya göre net fark olan discount_pct ile yapılır)."""
+    penalty = max(0.0, e.raw_discount_pct - e.discount_pct)
+    ref = e.median * (1 - penalty / 100.0)
+    gap = ref - float(e.data["price"])
+    return ref, gap, (gap / ref * 100.0 if ref > 0 else 0.0), penalty
 
 
 def format_entry(e: Entry, pool: int, fresh_hours: float) -> str:
     d = e.data
+    ref, gap, pct, penalty = reference_view(e)
     if e.estimated:
         return (
-            f"🔮 Tahmini fiyata göre %{fmt_pct(e.discount_pct)} ucuz (kesin değil)\n\n"
+            f"🔮 Tahmini fiyata göre %{fmt_pct(pct)} ucuz (kesin değil)\n\n"
             f"{listing_block(d)}\n\n"
             f"💰 İlan: {fmt_tl(d['price'])} TL\n"
-            f"🔮 İnternet taraması tahmini: {fmt_tl(e.median)} TL (arabam'da kıyaslanacak yeterli aynı donanım yok)\n"
-            f"📉 Fark: {fmt_tl(e.median - float(d['price']))} TL (%{fmt_pct(e.raw_discount_pct)})"
-            f"{damage_line(d)}\n"
+            f"🔮 İnternet taraması tahmini: {fmt_tl(e.median)} TL (arabam'da kıyaslanacak yeterli aynı donanım yok)"
+            f"{damage_line(d, penalty)}\n"
+            f"📉 Referans: {fmt_tl(ref)} TL → ilan {fmt_tl(gap)} TL (%{fmt_pct(pct)}) altında\n"
             f"⚠️ Bu bir tahmindir, fiyat doğrulanamadı: ilanı iyi kontrol edin.\n\n"
             f"(Son {fresh_hours:g} saatte {pool} aday arasından en iyisi)\n🔗 {d['url']}"
         )
@@ -115,12 +128,12 @@ def format_entry(e: Entry, pool: int, fresh_hours: float) -> str:
     if e.discount_pct >= SUSPICIOUS_PCT:
         warn = "\n⚠️ Çok yüksek fark: kilometre/donanım farkı veya fiyat hatası olabilir, ilanı iyi kontrol edin."
     return (
-        f"🏆 Seçilen ilan — benzerlerinden %{fmt_pct(e.discount_pct)} ucuz\n\n"
+        f"🏆 Seçilen ilan — benzerlerinden %{fmt_pct(pct)} ucuz\n\n"
         f"{listing_block(d)}\n\n"
         f"💰 İlan: {fmt_tl(d['price'])} TL\n"
-        f"📊 {e.level} {e.comparables} güncel ilanın ortası: {fmt_tl(e.median)} TL\n"
-        f"📉 Fark: {fmt_tl(e.median - float(d['price']))} TL (%{fmt_pct(e.raw_discount_pct)})"
-        f"{damage_line(d)}"
+        f"📊 {e.level} {e.comparables} güncel ilanın ortası: {fmt_tl(e.median)} TL"
+        f"{damage_line(d, penalty)}\n"
+        f"📉 Referans: {fmt_tl(ref)} TL → ilan {fmt_tl(gap)} TL (%{fmt_pct(pct)}) altında"
         f"{warn}\n\n"
         f"(Son {fresh_hours:g} saatte {pool} aday arasından en iyisi)\n🔗 {d['url']}"
     )
