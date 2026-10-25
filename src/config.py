@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     # --- Sağlık izleme ---------------------------------------------------------
     HEARTBEAT_HOURS: int = 24
     BLOCKED_CYCLES_ALERT: int = 2
+    BLOCKED_ROTATE_AFTER: int = 10       # bu kadar ardışık engelli döngüden sonra yedek proxy'ye geç (varsa)
 
     DB_PATH: str = "arbitrage_db.sqlite"
     LOG_LEVEL: str = "INFO"

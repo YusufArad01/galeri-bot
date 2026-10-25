@@ -41,6 +41,40 @@ class SeedTests(PipelineBase):
             self.assertEqual((await pm.has_active(), await pm.get_proxy()), (False, None))
 
 
+class RotateOnBlockTests(PipelineBase):
+    async def test_rotate_picks_standby(self):
+        """Aktif proxy engeldeyken yedek varsa geçiş yapılır."""
+        async with self.Session() as s:
+            pm = ProxyManager(s)
+            await pm.seed(["http://a:a@1.1.1.1:1"])
+            s.add(Proxy(url="http://b:b@2.2.2.2:2", is_active=False, failure_count=0))
+            await s.commit()
+            new = await pm.rotate_on_block()
+            self.assertEqual(new, "http://b:b@2.2.2.2:2")
+            active = await _active(s)
+            self.assertEqual(len(active), 1)
+            self.assertEqual(active[0].url, "http://b:b@2.2.2.2:2")
+
+    async def test_rotate_no_standby_returns_none(self):
+        """Yedek proxy yoksa None döner, aktif kapanmaz."""
+        async with self.Session() as s:
+            pm = ProxyManager(s)
+            await pm.seed(["http://a:a@1.1.1.1:1"])
+            self.assertIsNone(await pm.rotate_on_block())
+            self.assertEqual(len(await _active(s)), 1)
+
+    async def test_rotate_picks_least_failures(self):
+        """Birden fazla yedek varsa en az hatalısı seçilir."""
+        async with self.Session() as s:
+            pm = ProxyManager(s)
+            await pm.seed(["http://a:a@1.1.1.1:1"])
+            s.add(Proxy(url="http://b:b@2.2.2.2:2", is_active=False, failure_count=5))
+            s.add(Proxy(url="http://c:c@3.3.3.3:3", is_active=False, failure_count=1))
+            await s.commit()
+            new = await pm.rotate_on_block()
+            self.assertEqual(new, "http://c:c@3.3.3.3:3")
+
+
 async def _active(session):
     return (await session.execute(select(Proxy).where(Proxy.is_active == True))).scalars().all()  # noqa: E712
 

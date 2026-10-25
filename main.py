@@ -155,6 +155,16 @@ async def main():
             listener = asyncio.create_task(poll_forever(telegram, AsyncSessionLocal, settings.admin_chat))
         # Engel varsa sıklaştırmak engeli uzatır: 15, 30, 60, en çok 120 dk bekle (engel kalkınca normal aralığa döner)
         blocked_streak = blocked_streak + 1 if stats is not None and stats.blocked and not stats.scraped else 0
+        if blocked_streak >= settings.BLOCKED_ROTATE_AFTER:
+            async with AsyncSessionLocal() as session:
+                pm = ProxyManager(session)
+                new_url = await pm.rotate_on_block()
+                health = Health(session, telegram, settings.admin_chat, settings.HEARTBEAT_HOURS, settings.BLOCKED_CYCLES_ALERT)
+                if new_url:
+                    await health.notify_admin("proxy_rotate", f"🔄 {blocked_streak} döngüdür engel: yedek proxy'ye geçildi.", cooldown_hours=1)
+                    blocked_streak = 0
+                else:
+                    await health.notify_admin("proxy_rotate", f"🚧 {blocked_streak} döngüdür engel, yedek proxy yok. Yeni proxy ekleyin.", cooldown_hours=6)
         wait = min(120, 15 * 2 ** (blocked_streak - 1)) if blocked_streak else settings.SCRAPE_INTERVAL_MINUTES
         logger.info(f"Cycle finished. Waiting for {wait} minutes before the next run...")
         await asyncio.sleep(wait * 60)

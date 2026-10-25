@@ -59,3 +59,24 @@ class ProxyManager:
                 logger.warning(f"Quarantining proxy {proxy.url} due to repeated failures.")
                 proxy.is_active = False
             await self.session.commit()
+
+    async def rotate_on_block(self) -> str | None:
+        """Engel devam ediyorsa aktif proxy'yi kapat, sıradaki pasif proxy'yi aç.
+        Yeni proxy URL'sini döner; yedek yoksa None."""
+        active = (await self.session.execute(
+            select(Proxy).where(Proxy.is_active == True)  # noqa: E712
+        )).scalars().all()
+        standby = (await self.session.execute(
+            select(Proxy).where(Proxy.is_active == False).order_by(Proxy.failure_count.asc())  # noqa: E712
+        )).scalars().all()
+        if not standby:
+            return None
+        for p in active:
+            p.is_active = False
+            logger.info(f"Engel rotasyonu: {p.url} kapatıldı.")
+        pick = standby[0]
+        pick.is_active = True
+        pick.failure_count = 0
+        await self.session.commit()
+        logger.info(f"Engel rotasyonu: {pick.url} açıldı.")
+        return pick.url
