@@ -15,6 +15,7 @@ from src.notifications import Telegram
 from src.pipeline import build_targets, forget_known, run_cycle
 from src.proxy.manager import ProxyManager
 from src.scraper.engine import ScraperEngine
+from src.watchdog import Watchdog
 
 _OLD_TABLES = ("price_cache", "market_stats", "opportunities")   # eski sürümlerden kalan, artık kullanılmayan tablolar
 
@@ -142,8 +143,11 @@ async def main():
         await health.startup(describe_mode(dealers))
 
     listener = asyncio.create_task(poll_forever(telegram, AsyncSessionLocal, settings.admin_chat))  # 👍/👎 ve /start
+    watchdog = Watchdog(timeout_seconds=settings.WATCHDOG_MINUTES * 60)
+    watchdog.start()
     blocked_streak = 0
     while True:
+        watchdog.kick()
         if "dealer" in settings.modes:
             dealers, dealer_error = load_dealers_safe(dealers)
         stats = None
@@ -167,7 +171,13 @@ async def main():
                     await health.notify_admin("proxy_rotate", f"🚧 {blocked_streak} döngüdür engel, yedek proxy yok. Yeni proxy ekleyin.", cooldown_hours=6)
         wait = min(120, 15 * 2 ** (blocked_streak - 1)) if blocked_streak else settings.SCRAPE_INTERVAL_MINUTES
         logger.info(f"Cycle finished. Waiting for {wait} minutes before the next run...")
-        await asyncio.sleep(wait * 60)
+        # uzun bekleyişlerde de watchdog'u besle: tur bitti, hang yok
+        slept = 0
+        step = 60
+        while slept < wait * 60:
+            await asyncio.sleep(min(step, wait * 60 - slept))
+            slept += step
+            watchdog.kick()
 
 
 if __name__ == "__main__":

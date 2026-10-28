@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     HEARTBEAT_HOURS: int = 24
     BLOCKED_CYCLES_ALERT: int = 2
     BLOCKED_ROTATE_AFTER: int = 10       # bu kadar ardışık engelli döngüden sonra yedek proxy'ye geç (varsa)
+    WATCHDOG_MINUTES: int = 45            # bu kadar dakika tur tamamlanmazsa process ölür, Railway yeniden başlatır
 
     DB_PATH: str = "arbitrage_db.sqlite"
     LOG_LEVEL: str = "INFO"
