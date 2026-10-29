@@ -176,7 +176,7 @@ class Health:
         now = now or datetime.utcnow()
         tr = now + timedelta(hours=3)
         day = tr.date().isoformat()
-        if tr.hour != settings.DEALER_SUMMARY_HOUR or await self._get("dealer_summary_day") == day:
+        if tr.hour < settings.DEALER_SUMMARY_HOUR or await self._get("dealer_summary_day") == day:
             return 0
         day_start = datetime(tr.year, tr.month, tr.day) - timedelta(hours=3)   # UTC
         count = 0

@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     DEALER_ACTIVE_START: int = 8             # galerici mesajları Türkiye saatiyle bu saatler arasında gider
     DEALER_ACTIVE_END: int = 23
     DEALER_PAGES: int = 2                    # galerici arama sayfalarının kaç sayfası taransın
-    DEALER_SUMMARY_HOUR: int = 22            # günlük kısa özet bu saatte (Türkiye saati) galericilere gider
+    DEALER_SUMMARY_HOUR: int = 23            # günlük kısa özet bu saatten sonra (Türkiye saati) ilk döngüde galericilere gider
 
     # --- Döngü / dayanıklılık --------------------------------------------------
     SCRAPE_INTERVAL_MINUTES: int = 20

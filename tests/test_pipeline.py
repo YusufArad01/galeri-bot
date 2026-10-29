@@ -338,8 +338,9 @@ class HealthTests(PipelineBase):
             await s.commit()
             h = Health(s, self.telegram, "ADMIN")
             self.assertEqual(await h.send_dealer_summaries(dealers, now=datetime(2026, 10, 24, 12, 0)), 0)   # 15:00 TR: saati değil
-            self.assertEqual(await h.send_dealer_summaries(dealers, now=datetime(2026, 10, 24, 19, 30)), 2)  # 22:30 TR
-            self.assertEqual(await h.send_dealer_summaries(dealers, now=datetime(2026, 10, 24, 19, 50)), 0)  # aynı gün tekrar yok
+            self.assertEqual(await h.send_dealer_summaries(dealers, now=datetime(2026, 10, 24, 19, 30)), 0)  # 22:30 TR: hâlâ erken
+            self.assertEqual(await h.send_dealer_summaries(dealers, now=datetime(2026, 10, 24, 20, 0)), 2)   # 23:00 TR: ilk tur
+            self.assertEqual(await h.send_dealer_summaries(dealers, now=datetime(2026, 10, 24, 20, 30)), 0)  # aynı gün tekrar yok
         by_chat = {m["chat_id"]: m["text"] for m in self.sent}
         self.assertIn("3 ilan gönderdim; 2 tanesi güçlü", by_chat["42"])
         self.assertIn("yeni ilan çıkmadı", by_chat["43"])
